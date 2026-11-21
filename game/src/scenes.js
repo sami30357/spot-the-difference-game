@@ -1,11 +1,7 @@
-// Reef Spotter — the three scenes, drawn fresh every frame with Canvas 2D.
-// Each scene is one function that paints the same picture twice: the left panel
-// with no differences applied, the right panel with all seven. A difference is
-// always a small, local change (a missing fish, a recoloured shell, a shorter
-// blade), so the two pictures stay near-identical and every difference has a
-// fixed centre and radius for hit-testing.
-//
-// Panel-local coordinates: x 0..560, y 0..420. The sand starts near y 350.
+// Jungle Spotter v2 — three bright-daylight jungle scenes, all procedural Canvas 2D.
+// Each scene draws itself twice: panel A with variant flags off, panel B with them on.
+// A difference is one flag that changes exactly one small element; its (x, y, r)
+// in the 600x440 scene space is where the marker ring and hit test live.
 
 function ellipse(ctx, x, y, rx, ry) {
   ctx.beginPath();
@@ -19,518 +15,636 @@ function circle(ctx, x, y, r) {
   ctx.fill();
 }
 
-function star(ctx, x, y, r, colour) {
-  ctx.fillStyle = colour;
+function leaf(ctx, x, y, len, angle, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = color;
   ctx.beginPath();
-  for (let i = 0; i < 10; i += 1) {
-    const ang = -Math.PI / 2 + (i * Math.PI) / 5;
-    const rad = i % 2 === 0 ? r : r * 0.45;
-    const px = x + Math.cos(ang) * rad;
-    const py = y + Math.sin(ang) * rad;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
+  ctx.ellipse(0, 0, len, len * 0.38, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }
 
-/** A simple fish facing right: body, tail, eye and (optionally) white stripes. */
-function fish(ctx, x, y, size, body, stripes) {
+function flower(ctx, x, y, petal, center) {
+  ctx.fillStyle = petal;
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    circle(ctx, x + Math.cos(a) * 8, y + Math.sin(a) * 8, 6);
+  }
+  ctx.fillStyle = center;
+  circle(ctx, x, y, 5);
+}
+
+function butterfly(ctx, x, y, wing, body) {
+  ctx.fillStyle = wing;
+  ellipse(ctx, x - 9, y - 6, 10, 7);
+  ellipse(ctx, x + 9, y - 6, 10, 7);
+  ellipse(ctx, x - 8, y + 7, 8, 6);
+  ellipse(ctx, x + 8, y + 7, 8, 6);
   ctx.fillStyle = body;
-  ellipse(ctx, x, y, size, size * 0.55);
+  ellipse(ctx, x, y, 3, 9);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(x - size * 0.8, y);
-  ctx.lineTo(x - size * 1.5, y - size * 0.55);
-  ctx.lineTo(x - size * 1.5, y + size * 0.55);
-  ctx.closePath();
-  ctx.fill();
-  if (stripes > 0) {
-    ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < stripes; i += 1) {
-      const sx = x - size * 0.45 + i * size * 0.45;
-      ctx.fillRect(sx, y - size * 0.5, size * 0.14, size);
+  ctx.moveTo(x - 2, y - 9);
+  ctx.quadraticCurveTo(x - 7, y - 16, x - 10, y - 15);
+  ctx.moveTo(x + 2, y - 9);
+  ctx.quadraticCurveTo(x + 7, y - 16, x + 10, y - 15);
+  ctx.stroke();
+}
+
+function sun(ctx, x, y, withRays) {
+  if (withRays) {
+    ctx.strokeStyle = '#ffb703';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * 40, y + Math.sin(a) * 40);
+      ctx.lineTo(x + Math.cos(a) * 54, y + Math.sin(a) * 54);
+      ctx.stroke();
     }
   }
-  ctx.fillStyle = '#10222b';
-  circle(ctx, x + size * 0.55, y - size * 0.12, size * 0.11);
-  ctx.fillStyle = '#ffffff';
-  circle(ctx, x + size * 0.58, y - size * 0.16, size * 0.04);
+  ctx.fillStyle = '#ffd60a';
+  circle(ctx, x, y, 32);
+  ctx.fillStyle = '#fff3b0';
+  circle(ctx, x - 8, y - 8, 12);
 }
 
-/** A bubble: pale ring with a bright highlight dot. */
-function bubble(ctx, x, y, r) {
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  circle(ctx, x - r * 0.35, y - r * 0.35, r * 0.22);
+function cloud(ctx, x, y, s) {
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  circle(ctx, x, y, 18 * s);
+  circle(ctx, x + 20 * s, y + 4 * s, 15 * s);
+  circle(ctx, x - 20 * s, y + 5 * s, 14 * s);
+  ellipse(ctx, x, y + 8 * s, 34 * s, 12 * s);
 }
 
-/** A coral branch: a tapered, curving stalk with a round tip. */
-function branch(ctx, x, y, len, bend, width, colour) {
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = width;
+function grassTuft(ctx, x, y, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.quadraticCurveTo(x + bend, y - len * 0.55, x + bend * 1.4, y - len);
-  ctx.stroke();
-  ctx.fillStyle = colour;
-  circle(ctx, x + bend * 1.4, y - len, width * 0.75);
-}
-
-/** A swaying seaweed blade, drawn as a filled tapering curve. */
-function blade(ctx, x, y, height, lean, colour) {
-  ctx.fillStyle = colour;
-  ctx.beginPath();
-  ctx.moveTo(x - 5, y);
-  ctx.quadraticCurveTo(x + lean - 8, y - height * 0.6, x + lean, y - height);
-  ctx.quadraticCurveTo(x + lean + 8, y - height * 0.6, x + 5, y);
-  ctx.closePath();
-  ctx.fill();
-}
-
-/** The shared backdrop: bright water, sun rays from above, sandy floor. */
-function backdrop(ctx, w, h, sandY) {
-  const water = ctx.createLinearGradient(0, 0, 0, h);
-  water.addColorStop(0, '#4fd2ea');
-  water.addColorStop(0.55, '#2aa8c6');
-  water.addColorStop(1, '#1a7f9e');
-  ctx.fillStyle = water;
-  ctx.fillRect(0, 0, w, h);
-  // Distant reef silhouettes on the horizon, for depth.
-  ctx.fillStyle = 'rgba(16, 90, 115, 0.35)';
-  ctx.beginPath();
-  ctx.moveTo(0, sandY);
-  ctx.quadraticCurveTo(90, sandY - 52, 180, sandY - 18);
-  ctx.quadraticCurveTo(260, sandY - 66, 350, sandY - 22);
-  ctx.quadraticCurveTo(440, sandY - 58, 560, sandY - 14);
-  ctx.lineTo(560, sandY);
-  ctx.closePath();
-  ctx.fill();
-  // Sun rays slanting down from the surface.
-  ctx.fillStyle = 'rgba(255,255,255,0.10)';
-  for (let i = 0; i < 5; i += 1) {
-    const rx = 30 + i * 118;
+  for (const dx of [-8, -3, 2, 7]) {
     ctx.beginPath();
-    ctx.moveTo(rx, 0);
-    ctx.lineTo(rx + 46, 0);
-    ctx.lineTo(rx + 110, sandY);
-    ctx.lineTo(rx + 30, sandY);
+    ctx.moveTo(x + dx, y);
+    ctx.quadraticCurveTo(x + dx + 2, y - 14, x + dx + 6, y - 18);
+    ctx.stroke();
+  }
+}
+
+// ---------------------------------------------------------------- scene 1
+function drawClearing(ctx, v) {
+  // sky + sun
+  const sky = ctx.createLinearGradient(0, 0, 0, 300);
+  sky.addColorStop(0, '#7ec8f7');
+  sky.addColorStop(1, '#c9ecff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, 600, 300);
+  sun(ctx, 75, 65, !v.sunRays);
+  cloud(ctx, 210, 58, 1);
+  cloud(ctx, 430, 42, 0.8);
+
+  // ground
+  const ground = ctx.createLinearGradient(0, 300, 0, 440);
+  ground.addColorStop(0, '#7ec850');
+  ground.addColorStop(1, '#4e9b2f');
+  ctx.fillStyle = ground;
+  ctx.fillRect(0, 300, 600, 140);
+
+  // big tree left
+  ctx.fillStyle = '#7a4a21';
+  ctx.fillRect(58, 150, 34, 160);
+  ctx.fillStyle = '#2f7d32';
+  circle(ctx, 75, 130, 62);
+  circle(ctx, 30, 160, 42);
+  circle(ctx, 122, 158, 44);
+  ctx.fillStyle = '#43a047';
+  circle(ctx, 60, 105, 34);
+  circle(ctx, 100, 118, 30);
+  // branch + monkey
+  ctx.strokeStyle = '#7a4a21';
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.moveTo(90, 205);
+  ctx.lineTo(265, 195);
+  ctx.stroke();
+  // monkey body
+  ctx.fillStyle = '#8d5a2b';
+  circle(ctx, 185, 190, 22);
+  circle(ctx, 168, 168, 13);
+  circle(ctx, 202, 168, 13);
+  ctx.fillStyle = '#d9a066';
+  circle(ctx, 185, 196, 12);
+  circle(ctx, 185, 184, 7);
+  ctx.fillStyle = '#222';
+  circle(ctx, 178, 182, 2.5);
+  circle(ctx, 192, 182, 2.5);
+  // monkey tail: curled up in A, hanging straight down in B
+  ctx.strokeStyle = '#8d5a2b';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  if (!v.monkeyTail) {
+    ctx.moveTo(205, 205);
+    ctx.quadraticCurveTo(228, 195, 222, 172);
+    ctx.quadraticCurveTo(218, 158, 206, 164);
+  } else {
+    ctx.moveTo(205, 205);
+    ctx.quadraticCurveTo(214, 228, 210, 248);
+  }
+  ctx.stroke();
+
+  // tree right + toucan
+  ctx.fillStyle = '#7a4a21';
+  ctx.fillRect(505, 160, 30, 150);
+  ctx.fillStyle = '#2f7d32';
+  circle(ctx, 520, 130, 56);
+  circle(ctx, 480, 155, 38);
+  circle(ctx, 560, 152, 36);
+  ctx.strokeStyle = '#7a4a21';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(505, 200);
+  ctx.lineTo(430, 185);
+  ctx.stroke();
+  // toucan body
+  ctx.fillStyle = '#1b1b1b';
+  ellipse(ctx, 452, 178, 20, 15);
+  circle(ctx, 470, 162, 11);
+  ctx.fillStyle = '#fff';
+  circle(ctx, 452, 180, 8);
+  // beak: orange in A, leaf-green in B
+  ctx.fillStyle = v.toucanBeak ? '#43a047' : '#ff8c1a';
+  ctx.beginPath();
+  ctx.moveTo(478, 158);
+  ctx.lineTo(506, 166);
+  ctx.lineTo(478, 172);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#222';
+  circle(ctx, 472, 159, 2.5);
+
+  // hanging vines
+  ctx.strokeStyle = '#2e7d32';
+  ctx.lineWidth = 4;
+  for (const [vx, len] of [[300, 120], [360, 92]]) {
+    ctx.beginPath();
+    ctx.moveTo(vx, 0);
+    ctx.quadraticCurveTo(vx + 8, len / 2, vx - 4, len);
+    ctx.stroke();
+  }
+  leaf(ctx, 298, 60, 14, 0.6, '#43a047');
+  leaf(ctx, 362, 48, 12, -0.5, '#66bb6a');
+
+  // butterfly: present in A, gone in B
+  if (!v.butterfly) butterfly(ctx, 350, 150, '#ff5d8f', '#333');
+
+  // flowers along the ground
+  ctx.strokeStyle = '#2e7d32';
+  ctx.lineWidth = 3;
+  for (const fx of [250, 300, 340, 380]) {
+    ctx.beginPath();
+    ctx.moveTo(fx, 410);
+    ctx.lineTo(fx, 388);
+    ctx.stroke();
+  }
+  flower(ctx, 250, 384, '#ffd60a', '#ff8c1a');
+  if (!v.redFlower) flower(ctx, 300, 382, '#e63946', '#ffd60a');
+  flower(ctx, 340, 386, '#9b5de5', '#fff');
+  flower(ctx, 380, 384, '#e63946', '#ffd60a');
+  grassTuft(ctx, 120, 415, '#2e7d32');
+  grassTuft(ctx, 420, 420, '#2e7d32');
+
+  // mushrooms
+  ctx.fillStyle = '#fff8e1';
+  ctx.fillRect(514, 368, 10, 14);
+  ctx.fillStyle = '#e63946';
+  ctx.beginPath();
+  ctx.arc(519, 368, 16, Math.PI, 0);
+  ctx.fill();
+  if (!v.mushroomSpots) {
+    ctx.fillStyle = '#fff';
+    circle(ctx, 512, 360, 3);
+    circle(ctx, 524, 356, 2.5);
+    circle(ctx, 520, 365, 2);
+  }
+
+  // pond + frog: frog present in A, gone in B
+  ctx.fillStyle = '#4db2e8';
+  ellipse(ctx, 470, 420, 78, 16);
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ellipse(ctx, 440, 416, 30, 4);
+  if (!v.frog) {
+    ctx.fillStyle = '#43a047';
+    circle(ctx, 462, 404, 11);
+    circle(ctx, 470, 398, 6);
+    circle(ctx, 482, 398, 6);
+    ctx.fillStyle = '#fff';
+    circle(ctx, 470, 397, 3);
+    circle(ctx, 482, 397, 3);
+    ctx.fillStyle = '#222';
+    circle(ctx, 470, 397, 1.5);
+    circle(ctx, 482, 397, 1.5);
+  }
+}
+
+// ---------------------------------------------------------------- scene 2
+function drawRiverbank(ctx, v) {
+  const sky = ctx.createLinearGradient(0, 0, 0, 280);
+  sky.addColorStop(0, '#8fd3f4');
+  sky.addColorStop(1, '#dff3ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, 600, 280);
+  sun(ctx, 520, 55, !v.sunRays);
+  cloud(ctx, 150, 55, 1);
+  cloud(ctx, 330, 80, 0.7);
+
+  // river
+  const river = ctx.createLinearGradient(0, 280, 0, 440);
+  river.addColorStop(0, '#3aa7e0');
+  river.addColorStop(1, '#1d7fb8');
+  ctx.fillStyle = river;
+  ctx.fillRect(0, 280, 600, 160);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 3;
+  for (const [wx, wy] of [[120, 320], [300, 350], [460, 310], [200, 400], [420, 405]]) {
+    ctx.beginPath();
+    ctx.moveTo(wx, wy);
+    ctx.quadraticCurveTo(wx + 18, wy - 6, wx + 36, wy);
+    ctx.stroke();
+  }
+
+  // banks
+  ctx.fillStyle = '#8bc34a';
+  ctx.beginPath();
+  ctx.moveTo(0, 280);
+  ctx.lineTo(0, 330);
+  ctx.lineTo(140, 280);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#e8d29a';
+  ctx.beginPath();
+  ctx.moveTo(600, 280);
+  ctx.lineTo(600, 340);
+  ctx.lineTo(470, 280);
+  ctx.closePath();
+  ctx.fill();
+
+  // leaning palm tree left
+  ctx.strokeStyle = '#8d5a2b';
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.moveTo(70, 300);
+  ctx.quadraticCurveTo(95, 200, 130, 140);
+  ctx.stroke();
+  ctx.fillStyle = '#2f9e44';
+  for (const a of [-2.4, -1.7, -1.0, -0.3, 0.4]) {
+    leaf(ctx, 130, 140, 52, a, '#2f9e44');
+  }
+  // coconuts: 3 in A, 2 in B
+  ctx.fillStyle = '#6d4c41';
+  circle(ctx, 118, 152, 9);
+  circle(ctx, 140, 158, 9);
+  if (!v.coconut) circle(ctx, 129, 166, 9);
+
+  // crocodile in the river
+  ctx.fillStyle = '#5a8f3c';
+  ellipse(ctx, 250, 362, 72, 20);
+  ellipse(ctx, 300, 356, 34, 12);
+  ctx.fillStyle = '#6da34a';
+  circle(ctx, 300, 344, 7);
+  circle(ctx, 312, 344, 7);
+  ctx.fillStyle = '#fff';
+  circle(ctx, 300, 342, 3);
+  circle(ctx, 312, 342, 3);
+  ctx.fillStyle = '#222';
+  circle(ctx, 301, 342, 1.5);
+  circle(ctx, 313, 342, 1.5);
+  // teeth: present in A, gone in B
+  if (!v.crocTeeth) {
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(288 + i * 8, 364);
+      ctx.lineTo(292 + i * 8, 372);
+      ctx.lineTo(296 + i * 8, 364);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.strokeStyle = '#4a7a33';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(190, 352);
+  ctx.lineTo(180, 340);
+  ctx.moveTo(195, 368);
+  ctx.lineTo(186, 378);
+  ctx.stroke();
+
+  // kingfisher on a branch: present in A, gone in B
+  ctx.strokeStyle = '#7a4a21';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(400, 210);
+  ctx.lineTo(470, 195);
+  ctx.stroke();
+  if (!v.kingfisher) {
+    ctx.fillStyle = '#1976d2';
+    ellipse(ctx, 436, 182, 16, 12);
+    circle(ctx, 450, 168, 9);
+    ctx.fillStyle = '#ff7043';
+    ellipse(ctx, 436, 190, 12, 6);
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.moveTo(458, 166);
+    ctx.lineTo(474, 170);
+    ctx.lineTo(458, 174);
     ctx.closePath();
     ctx.fill();
   }
-  // Floating plankton motes drifting in the light.
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  const motes = [[70, 60], [140, 130], [210, 50], [260, 200], [330, 90], [390, 160], [450, 60], [510, 140], [180, 240], [300, 260], [470, 230], [90, 190], [360, 40], [520, 260]];
-  for (const [mx, my] of motes) circle(ctx, mx, my, 2);
-  // Sandy floor with speckles.
-  ctx.fillStyle = '#f2ddab';
-  ctx.fillRect(0, sandY, w, h - sandY);
-  ctx.fillStyle = '#e3c98f';
-  const speckles = [[30, 372], [120, 398], [210, 366], [300, 404], [390, 372], [470, 398], [520, 366], [80, 412], [350, 388], [500, 412]];
-  for (const [sx, sy] of speckles) ellipse(ctx, sx, sy, 9, 4);
-  // A soft vignette so the picture reads as a framed photograph.
-  const vig = ctx.createRadialGradient(w / 2, h / 2, h * 0.45, w / 2, h / 2, w * 0.75);
-  vig.addColorStop(0, 'rgba(0,0,0,0)');
-  vig.addColorStop(1, 'rgba(4,40,56,0.22)');
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, w, h);
-}
 
-/** A shell: a fan of arcs on the sand. */
-function shell(ctx, x, y, size, colour) {
-  ctx.fillStyle = colour;
-  ctx.beginPath();
-  ctx.arc(x, y, size, Math.PI, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-  ctx.lineWidth = 2;
-  for (let i = -2; i <= 2; i += 1) {
+  // lily pads + lotus: pink in A, white in B
+  ctx.fillStyle = '#2f9e44';
+  ellipse(ctx, 350, 392, 34, 10);
+  ellipse(ctx, 392, 400, 26, 8);
+  flower(ctx, 350, 384, v.lotus ? '#ffffff' : '#ff5d8f', '#ffd60a');
+
+  // turtle on a rock: present in A, gone in B
+  ctx.fillStyle = '#9e9e9e';
+  ellipse(ctx, 520, 336, 40, 14);
+  if (!v.turtle) {
+    ctx.fillStyle = '#5a8f3c';
+    ellipse(ctx, 520, 322, 22, 13);
+    circle(ctx, 542, 314, 8);
+    ctx.fillStyle = '#7cb342';
+    ellipse(ctx, 520, 318, 14, 7);
+    ctx.strokeStyle = '#4a7a33';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.sin((i * Math.PI) / 5) * size, y - Math.cos((i * Math.PI) / 5) * size);
+    ctx.moveTo(500, 330);
+    ctx.lineTo(492, 336);
+    ctx.moveTo(540, 330);
+    ctx.lineTo(548, 336);
     ctx.stroke();
   }
-}
 
-// ---------------------------------------------------------------------------
-// Scene 0 — Reef Garden. Differences:
-//   0 clownfish stripes 3 -> 2      (150, 150)
-//   1 starfish present -> gone      (120, 385)
-//   2 shell pink -> blue            (430, 390)
-//   3 bubble present -> gone        (280, 90)
-//   4 coral tip orange -> purple    (464, 232) — the branch tip itself
-//   5 seaweed blade tall -> short   (65, 280) — the blade's top half
-//   6 yellow fish present -> gone   (300, 220)
-// ---------------------------------------------------------------------------
-export const DIFFS_0 = [
-  { x: 150, y: 150, r: 30, label: 'clownfish stripes' },
-  { x: 120, y: 385, r: 26, label: 'starfish' },
-  { x: 430, y: 390, r: 24, label: 'shell colour' },
-  { x: 280, y: 90, r: 18, label: 'bubble' },
-  { x: 464, y: 232, r: 30, label: 'coral tip' },
-  { x: 65, y: 280, r: 30, label: 'seaweed blade' },
-  { x: 300, y: 220, r: 24, label: 'yellow fish' },
-];
-
-export function drawScene0(ctx, w, h, diffs) {
-  backdrop(ctx, w, h, 350);
-  // Coral clusters on the sand.
-  branch(ctx, 60, 352, 90, -14, 12, '#ff7f9e');
-  branch(ctx, 84, 352, 70, 10, 10, '#ff7f9e');
-  branch(ctx, 108, 352, 95, 4, 11, '#ff9db4');
-  branch(ctx, 430, 352, 80, -10, 11, '#ff9f43');
-  branch(ctx, 452, 352, 100, 8, 12, '#ff9f43');
-  // Difference 4: the tall orange branch tip turns purple.
-  if (diffs.has(4)) branch(ctx, 472, 352, 120, -6, 12, '#b388ff');
-  else branch(ctx, 472, 352, 120, -6, 12, '#ff9f43');
-  branch(ctx, 500, 352, 75, 12, 10, '#c084fc');
-  branch(ctx, 522, 352, 95, -8, 11, '#c084fc');
-  // Seaweed blades along the floor.
-  blade(ctx, 40, 352, 90, 14, '#2fae6e');
-  // Difference 5: this blade is short instead of tall.
-  blade(ctx, 60, 352, diffs.has(5) ? 34 : 108, 10, '#37bd7a');
-  blade(ctx, 200, 352, 84, -12, '#2fae6e');
-  blade(ctx, 330, 352, 96, 12, '#37bd7a');
-  blade(ctx, 540, 352, 88, -14, '#2fae6e');
-  // The clownfish: three white stripes on the left picture, two on the right.
-  fish(ctx, 150, 150, 34, '#ff8c1a', diffs.has(0) ? 2 : 3);
-  // A blue tang and a yellow fish.
-  fish(ctx, 400, 100, 26, '#3b82f6', 0);
-  if (!diffs.has(6)) fish(ctx, 300, 220, 20, '#ffd93b', 0);
-  // Two more swimmers that never change: a pink fish and a green fish.
-  fish(ctx, 350, 300, 18, '#ff7fb0', 0);
-  fish(ctx, 520, 80, 16, '#4ade80', 0);
-  // Bubbles rising from the coral.
-  bubble(ctx, 240, 140, 9);
-  if (!diffs.has(3)) bubble(ctx, 280, 90, 11);
-  bubble(ctx, 320, 170, 7);
-  bubble(ctx, 500, 120, 8);
-  bubble(ctx, 140, 200, 7);
-  bubble(ctx, 460, 60, 6);
-  // Difference 1: the starfish on the sand.
-  if (!diffs.has(1)) star(ctx, 120, 385, 22, '#ff8c69');
-  star(ctx, 520, 380, 15, '#ffb347');
-  // Shells on the sand; difference 2 recolours the big one.
-  shell(ctx, 430, 390, 20, diffs.has(2) ? '#6ea8ff' : '#ff9db4');
-  shell(ctx, 250, 398, 14, '#e8b4d8');
-  shell(ctx, 520, 396, 12, '#ffd166');
-}
-
-// ---------------------------------------------------------------------------
-// Scene 1 — Turtle Cove. Differences:
-//   0 turtle shell spot present -> gone   (272, 184) — the top-centre spot
-//   1 seahorse present -> gone            (90, 260)
-//   2 school fish 5 -> 4                  (180, 68) — the middle fish
-//   3 anemone pink -> orange              (470, 360)
-//   4 coral arch branch present -> gone   (495, 275) — the branch's middle
-//   5 bubble near turtle present -> gone  (350, 140)
-//   6 rock grey -> brown                  (200, 380)
-// ---------------------------------------------------------------------------
-export const DIFFS_1 = [
-  { x: 272, y: 184, r: 26, label: 'turtle shell spot' },
-  { x: 90, y: 260, r: 28, label: 'seahorse' },
-  { x: 180, y: 68, r: 22, label: 'school fish' },
-  { x: 470, y: 360, r: 28, label: 'anemone colour' },
-  { x: 495, y: 275, r: 30, label: 'coral arch branch' },
-  { x: 350, y: 140, r: 18, label: 'bubble' },
-  { x: 200, y: 380, r: 24, label: 'rock colour' },
-];
-
-function turtle(ctx, x, y, diffs) {
-  // Flippers.
-  ctx.fillStyle = '#2f9e6e';
-  ellipse(ctx, x - 78, y - 28, 26, 12);
-  ellipse(ctx, x - 78, y + 34, 26, 12);
-  ellipse(ctx, x + 82, y - 24, 24, 11);
-  ellipse(ctx, x + 82, y + 30, 24, 11);
-  // Head.
-  ellipse(ctx, x + 96, y + 4, 22, 16);
-  ctx.fillStyle = '#10222b';
-  circle(ctx, x + 106, y - 2, 4);
-  // Shell: a big dome with a rim and pattern spots.
-  ctx.fillStyle = '#3f8f5f';
-  ellipse(ctx, x, y, 88, 62);
-  ctx.fillStyle = '#2b6e47';
-  ellipse(ctx, x, y - 6, 70, 46);
-  ctx.fillStyle = '#7cc79a';
-  const spots = [[-40, -12], [-8, -26], [28, -18], [-28, 18], [8, 22], [44, 8]];
-  for (const [sx, sy] of spots) {
-    // Difference 0: the top-centre spot is missing on the right picture.
-    if (sx === -8 && sy === -26 && diffs.has(0)) continue;
-    circle(ctx, x + sx, y + sy, 8);
+  // dragonfly: present in A, gone in B
+  if (!v.dragonfly) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 2;
+    ellipse(ctx, 168, 244, 16, 5);
+    ellipse(ctx, 192, 244, 16, 5);
+    ctx.fillStyle = '#26a69a';
+    ellipse(ctx, 180, 252, 3, 12);
   }
-  ctx.strokeStyle = '#1d4d33';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.ellipse(x, y, 88, 62, 0, 0, Math.PI * 2);
-  ctx.stroke();
-}
 
-function seahorse(ctx, x, y) {
-  ctx.strokeStyle = '#ff9f43';
-  ctx.lineWidth = 9;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x, y + 34);
-  ctx.quadraticCurveTo(x - 16, y + 10, x - 4, y - 12);
-  ctx.quadraticCurveTo(x + 4, y - 26, x + 14, y - 30);
-  ctx.stroke();
-  ctx.fillStyle = '#ff9f43';
-  circle(ctx, x + 18, y - 32, 9);
-  ctx.fillStyle = '#10222b';
-  circle(ctx, x + 21, y - 34, 2.5);
-  ctx.strokeStyle = '#e07b1f';
+  // reeds
+  ctx.strokeStyle = '#2e7d32';
   ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(x - 6, y + 34);
-  ctx.quadraticCurveTo(x - 22, y + 44, x - 26, y + 30);
-  ctx.stroke();
-}
-
-function anemone(ctx, x, y, colour) {
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = 5;
-  ctx.lineCap = 'round';
-  for (let i = -4; i <= 4; i += 1) {
+  for (const rx of [30, 48, 66]) {
     ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.quadraticCurveTo(x + i * 8, y - 22, x + i * 11, y - 40 - Math.abs(i) * -2);
+    ctx.moveTo(rx, 330);
+    ctx.lineTo(rx + 4, 288);
     ctx.stroke();
   }
-  ctx.fillStyle = colour;
-  circle(ctx, x, y, 8);
+  ctx.fillStyle = '#8d6e63';
+  ellipse(ctx, 34, 284, 5, 12);
 }
 
-export function drawScene1(ctx, w, h, diffs) {
-  backdrop(ctx, w, h, 352);
-  // Coral arch on the right.
-  branch(ctx, 480, 352, 130, -30, 13, '#ff7f9e');
-  if (!diffs.has(4)) branch(ctx, 505, 352, 150, -12, 12, '#ff9db4');
-  branch(ctx, 530, 352, 120, 16, 12, '#ff7f9e');
-  // Rocks on the floor.
-  ctx.fillStyle = diffs.has(6) ? '#8b5a2b' : '#8d9aa5';
-  ellipse(ctx, 200, 384, 34, 18);
-  ctx.fillStyle = '#7c8a95';
-  ellipse(ctx, 320, 390, 28, 15);
-  // The turtle, centre stage.
-  turtle(ctx, 280, 210, diffs);
-  // Difference 1: the seahorse clinging to the left coral.
-  if (!diffs.has(1)) seahorse(ctx, 90, 260);
-  // A school of small fish, upper left; one is missing on the right.
-  const school = [[120, 70], [150, 88], [180, 68], [205, 92], [230, 74]];
-  school.forEach(([fx, fy], i) => {
-    if (i === 2 && diffs.has(2)) return;
-    fish(ctx, fx, fy, 13, '#ffd93b', 0);
-  });
-  // Bubbles from the turtle.
-  bubble(ctx, 380, 120, 8);
-  if (!diffs.has(5)) bubble(ctx, 350, 140, 10);
-  bubble(ctx, 410, 150, 6);
-  bubble(ctx, 120, 160, 7);
-  // Two small fish cruising low, and a coral sprig on the left floor.
-  fish(ctx, 200, 300, 15, '#ff7fb0', 0);
-  fish(ctx, 390, 300, 14, '#4ade80', 0);
-  branch(ctx, 40, 352, 55, 8, 9, '#c084fc');
-  // Anemone, bottom right; difference 3 recolours it.
-  anemone(ctx, 470, 360, diffs.has(3) ? '#ff8c1a' : '#ff7fb0');
-  // A starfish and a shell.
-  star(ctx, 420, 392, 18, '#ff8c69');
-  shell(ctx, 90, 392, 14, '#e8b4d8');
-}
-
-// ---------------------------------------------------------------------------
-// Scene 2 — Sunken Treasure. Differences:
-//   0 octopus arm 8 -> 7                   (420, 225) — the third arm's middle
-//   1 jewel red -> green                    (350, 370)
-//   2 coin stack top coin present -> gone   (230, 370) — the stack itself
-//   3 anchor rope present -> gone           (90, 244) — the rope's middle
-//   4 small fish present -> gone            (480, 70)
-//   5 coral pink -> orange                  (515, 305) — the branch's middle
-//   6 bubble present -> gone                (200, 100)
-// ---------------------------------------------------------------------------
-export const DIFFS_2 = [
-  { x: 420, y: 225, r: 26, label: 'octopus arm' },
-  { x: 350, y: 370, r: 22, label: 'jewel colour' },
-  { x: 230, y: 370, r: 22, label: 'coin stack' },
-  { x: 90, y: 244, r: 26, label: 'anchor rope' },
-  { x: 480, y: 70, r: 22, label: 'small fish' },
-  { x: 515, y: 305, r: 26, label: 'coral colour' },
-  { x: 200, y: 100, r: 18, label: 'bubble' },
-];
-
-function octopus(ctx, x, y, diffs) {
-  // Arms: eight curving strokes; difference 0 drops the third one.
-  ctx.strokeStyle = '#b06fd6';
-  ctx.lineWidth = 10;
-  ctx.lineCap = 'round';
-  for (let i = 0; i < 8; i += 1) {
-    if (i === 2 && diffs.has(0)) continue;
-    const spread = (i - 3.5) * 16;
-    ctx.beginPath();
-    ctx.moveTo(x + spread * 0.4, y + 18);
-    ctx.quadraticCurveTo(x + spread, y + 52, x + spread * 1.25, y + 82);
-    ctx.stroke();
+// ---------------------------------------------------------------- scene 3
+function drawCanopy(ctx, v) {
+  // canopy ceiling
+  const sky = ctx.createLinearGradient(0, 0, 0, 440);
+  sky.addColorStop(0, '#aee9a0');
+  sky.addColorStop(1, '#5da24a');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, 600, 440);
+  ctx.fillStyle = '#1b5e20';
+  for (const [lx, ly, lr] of [[60, 40, 90], [220, 20, 110], [400, 30, 100], [550, 50, 90], [140, 90, 70], [330, 80, 80], [480, 100, 70]]) {
+    circle(ctx, lx, ly, lr);
   }
-  // Dome head with two eyes and a smile.
-  ctx.fillStyle = '#c084fc';
+  ctx.fillStyle = '#2e7d32';
+  for (const [lx, ly, lr] of [[120, 60, 60], [300, 45, 70], [470, 55, 60], [250, 110, 50]]) {
+    circle(ctx, lx, ly, lr);
+  }
+
+  // sunbeams: one beam missing in B
+  ctx.fillStyle = 'rgba(255,244,170,0.45)';
   ctx.beginPath();
-  ctx.arc(x, y, 42, Math.PI, 0);
+  ctx.moveTo(150, 120);
+  ctx.lineTo(190, 120);
+  ctx.lineTo(120, 440);
+  ctx.lineTo(70, 440);
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  circle(ctx, x - 15, y - 12, 9);
-  circle(ctx, x + 15, y - 12, 9);
-  ctx.fillStyle = '#10222b';
-  circle(ctx, x - 15, y - 12, 4.5);
-  circle(ctx, x + 15, y - 12, 4.5);
-  ctx.strokeStyle = '#10222b';
+  if (!v.sunbeam) {
+    ctx.beginPath();
+    ctx.moveTo(300, 120);
+    ctx.lineTo(330, 120);
+    ctx.lineTo(400, 440);
+    ctx.lineTo(360, 440);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // forest floor + path
+  ctx.fillStyle = '#4e9b2f';
+  ctx.fillRect(0, 340, 600, 100);
+  ctx.fillStyle = '#c9a86a';
+  ctx.beginPath();
+  ctx.moveTo(270, 440);
+  ctx.lineTo(285, 210);
+  ctx.lineTo(315, 210);
+  ctx.lineTo(330, 440);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#a9824f';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(x, y + 6, 10, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.moveTo(292, 250);
+  ctx.lineTo(308, 250);
+  ctx.moveTo(288, 330);
+  ctx.lineTo(312, 330);
   ctx.stroke();
-}
 
-function chest(ctx, x, y, diffs) {
-  // The wooden chest, lid open, gold spilling out.
-  ctx.fillStyle = '#8b5a2b';
-  ctx.fillRect(x - 52, y - 6, 104, 52);
-  ctx.fillStyle = '#a06a35';
-  ctx.fillRect(x - 52, y - 6, 104, 10);
-  ctx.save();
-  ctx.translate(x, y - 6);
-  ctx.rotate(-0.5);
-  ctx.fillStyle = '#7a4a22';
-  ctx.fillRect(-52, -34, 104, 34);
-  ctx.restore();
-  ctx.fillStyle = '#ffd166';
-  ctx.fillRect(x - 6, y - 6, 12, 52);
-  // Coins spilling from the chest.
-  ctx.fillStyle = '#ffd166';
-  const coins = [[-38, 52], [-18, 58], [4, 54], [26, 60], [44, 52], [-28, 40], [14, 40]];
-  for (const [cx, cy] of coins) circle(ctx, x + cx, y + cy, 8);
-  ctx.strokeStyle = '#d9a441';
+  // trees
+  ctx.fillStyle = '#6d4c41';
+  ctx.fillRect(72, 120, 36, 320);
+  ctx.fillRect(500, 130, 34, 310);
+  // branch across
+  ctx.strokeStyle = '#6d4c41';
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.moveTo(90, 180);
+  ctx.lineTo(470, 165);
+  ctx.stroke();
+
+  // two parrots: second one gone in B
+  ctx.fillStyle = '#d32f2f';
+  ellipse(ctx, 200, 168, 16, 12);
+  circle(ctx, 214, 154, 9);
+  ctx.fillStyle = '#1976d2';
+  ellipse(ctx, 200, 174, 10, 5);
+  ctx.fillStyle = '#ffb703';
+  ctx.beginPath();
+  ctx.moveTo(222, 152);
+  ctx.lineTo(234, 156);
+  ctx.lineTo(222, 160);
+  ctx.closePath();
+  ctx.fill();
+  if (!v.parrot2) {
+    ctx.fillStyle = '#1976d2';
+    ellipse(ctx, 262, 164, 16, 12);
+    circle(ctx, 276, 150, 9);
+    ctx.fillStyle = '#ff7043';
+    ellipse(ctx, 262, 170, 10, 5);
+    ctx.fillStyle = '#ffb703';
+    ctx.beginPath();
+    ctx.moveTo(284, 148);
+    ctx.lineTo(296, 152);
+    ctx.lineTo(284, 156);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // sloth hanging: present in A, gone in B
+  if (!v.sloth) {
+    ctx.strokeStyle = '#8d6e63';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(420, 172);
+    ctx.lineTo(420, 200);
+    ctx.moveTo(436, 172);
+    ctx.lineTo(436, 200);
+    ctx.stroke();
+    ctx.fillStyle = '#a1887f';
+    ellipse(ctx, 428, 212, 18, 14);
+    circle(ctx, 428, 198, 10);
+    ctx.fillStyle = '#efebe9';
+    circle(ctx, 428, 200, 6);
+    ctx.fillStyle = '#222';
+    circle(ctx, 424, 198, 2);
+    circle(ctx, 432, 198, 2);
+  }
+
+  // snake coiled on the branch: present in A, gone in B
+  if (!v.snake) {
+    ctx.strokeStyle = '#43a047';
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(322, 168);
+    ctx.quadraticCurveTo(345, 150, 352, 168);
+    ctx.quadraticCurveTo(358, 186, 340, 180);
+    ctx.stroke();
+    ctx.fillStyle = '#2e7d32';
+    circle(ctx, 352, 164, 7);
+    ctx.fillStyle = '#ff5252';
+    ctx.beginPath();
+    ctx.moveTo(358, 166);
+    ctx.lineTo(366, 164);
+    ctx.lineTo(358, 170);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // orchids on the left trunk: pink in A, orange in B
+  flower(ctx, 92, 300, v.orchid ? '#ff8c1a' : '#ff5d8f', '#ffd60a');
+  flower(ctx, 108, 322, v.orchid ? '#ff8c1a' : '#e040fb', '#fff');
+  ctx.strokeStyle = '#2e7d32';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(90, 310);
+  ctx.lineTo(104, 332);
+  ctx.stroke();
+
+  // stream + log bridge at the bottom
+  ctx.fillStyle = '#4db2e8';
+  ctx.fillRect(0, 400, 600, 40);
+  ctx.fillStyle = '#8d5a2b';
+  ctx.fillRect(240, 402, 130, 14);
+  ctx.strokeStyle = '#6d4c41';
   ctx.lineWidth = 2;
-  for (const [cx, cy] of coins) {
+  for (const bx of [265, 300, 335]) {
     ctx.beginPath();
-    ctx.arc(x + cx, y + cy, 5, 0, Math.PI * 2);
+    ctx.moveTo(bx, 402);
+    ctx.lineTo(bx, 416);
     ctx.stroke();
   }
-  // The coin stack beside the chest; difference 2 takes its top coin.
-  ctx.fillStyle = '#ffd166';
-  const stack = [[-70, 52], [-70, 40], [-70, 28]];
-  stack.forEach(([sx, sy], i) => {
-    if (i === 2 && diffs.has(2)) return;
-    ellipse(ctx, x + sx, y + sy, 12, 5);
-  });
-}
 
-function jewel(ctx, x, y, colour) {
-  ctx.fillStyle = colour;
-  ctx.beginPath();
-  ctx.moveTo(x, y - 12);
-  ctx.lineTo(x + 11, y);
-  ctx.lineTo(x, y + 12);
-  ctx.lineTo(x - 11, y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  ctx.beginPath();
-  ctx.moveTo(x - 4, y - 6);
-  ctx.lineTo(x + 2, y - 6);
-  ctx.lineTo(x, y);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function anchor(ctx, x, y, diffs) {
-  ctx.strokeStyle = '#5b6b76';
-  ctx.lineWidth = 7;
-  ctx.lineCap = 'round';
-  // Difference 3: the rope from the anchor ring is missing.
-  if (!diffs.has(3)) {
-    ctx.beginPath();
-    ctx.moveTo(x, y - 78);
-    ctx.lineTo(x, y - 34);
-    ctx.stroke();
+  // frog on a leaf: present in A, gone in B
+  ctx.fillStyle = '#2f9e44';
+  ellipse(ctx, 150, 404, 34, 10);
+  if (!v.frog) {
+    ctx.fillStyle = '#66bb6a';
+    circle(ctx, 150, 392, 11);
+    circle(ctx, 142, 384, 6);
+    circle(ctx, 158, 384, 6);
+    ctx.fillStyle = '#fff';
+    circle(ctx, 142, 383, 3);
+    circle(ctx, 158, 383, 3);
+    ctx.fillStyle = '#222';
+    circle(ctx, 142, 383, 1.5);
+    circle(ctx, 158, 383, 1.5);
   }
+
+  // mushroom: red cap in A, yellow cap in B
+  ctx.fillStyle = '#fff8e1';
+  ctx.fillRect(474, 378, 9, 12);
+  ctx.fillStyle = v.mushroom ? '#ffd60a' : '#e63946';
   ctx.beginPath();
-  ctx.moveTo(x, y - 40);
-  ctx.lineTo(x, y + 34);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x - 26, y - 26);
-  ctx.lineTo(x + 26, y - 26);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(x, y + 34, 22, 0.15 * Math.PI, 0.85 * Math.PI);
-  ctx.stroke();
-  ctx.fillStyle = '#5b6b76';
-  circle(ctx, x - 18, y + 50, 6);
-  circle(ctx, x + 18, y + 50, 6);
-  circle(ctx, x, y - 46, 8);
+  ctx.arc(478, 378, 14, Math.PI, 0);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  circle(ctx, 473, 372, 2.5);
+  circle(ctx, 483, 369, 2);
+  grassTuft(ctx, 560, 395, '#2e7d32');
+  grassTuft(ctx, 40, 400, '#2e7d32');
 }
 
-export function drawScene2(ctx, w, h, diffs) {
-  backdrop(ctx, w, h, 348);
-  // Coral at the edges; difference 5 recolours the right-hand one.
-  branch(ctx, 40, 350, 80, 10, 11, '#ff7f9e');
-  branch(ctx, 520, 350, 88, -10, 11, diffs.has(5) ? '#ff9f43' : '#ff7f9e');
-  branch(ctx, 540, 350, 70, 8, 10, '#ff9db4');
-  blade(ctx, 70, 350, 86, 12, '#2fae6e');
-  blade(ctx, 490, 350, 80, -10, '#37bd7a');
-  // The sunken chest, centre floor.
-  chest(ctx, 300, 330, diffs);
-  // Jewels scattered on the sand; difference 1 recolours the red one.
-  jewel(ctx, 350, 370, diffs.has(1) ? '#4ade80' : '#ef4444');
-  jewel(ctx, 180, 388, '#3b82f6');
-  jewel(ctx, 420, 392, '#4ade80');
-  // The anchor on the left.
-  anchor(ctx, 90, 300, diffs);
-  // The octopus, upper right.
-  octopus(ctx, 440, 170, diffs);
-  // Difference 4: the small fish near the top right.
-  if (!diffs.has(4)) fish(ctx, 480, 70, 16, '#ffd93b', 0);
-  fish(ctx, 150, 130, 18, '#3b82f6', 0);
-  fish(ctx, 120, 180, 14, '#4ade80', 0);
-  // Bubbles.
-  if (!diffs.has(6)) bubble(ctx, 200, 100, 10);
-  bubble(ctx, 240, 70, 7);
-  bubble(ctx, 380, 90, 8);
-  bubble(ctx, 500, 200, 6);
-  // A few loose coins and a blue jewel on the sand.
-  ctx.fillStyle = '#ffd166';
-  circle(ctx, 160, 402, 7);
-  circle(ctx, 460, 380, 7);
-  jewel(ctx, 250, 395, '#3b82f6');
-  star(ctx, 520, 392, 16, '#ff8c69');
-}
-
-// ---------------------------------------------------------------------------
-// Registry: every scene's painter and its seven differences.
-// ---------------------------------------------------------------------------
 export const SCENES = [
-  { name: 'Reef Garden', draw: drawScene0, diffs: DIFFS_0 },
-  { name: 'Turtle Cove', draw: drawScene1, diffs: DIFFS_1 },
-  { name: 'Sunken Treasure', draw: drawScene2, diffs: DIFFS_2 },
+  {
+    id: 'clearing',
+    name: 'Jungle Clearing',
+    hint: 'Sunny clearing — monkey, toucan and a little pond',
+    draw: drawClearing,
+    diffs: [
+      { x: 75, y: 65, r: 42, flag: 'sunRays', label: 'Sun rays' },
+      { x: 350, y: 150, r: 24, flag: 'butterfly', label: 'Butterfly' },
+      { x: 208, y: 205, r: 28, flag: 'monkeyTail', label: 'Monkey tail' },
+      { x: 490, y: 164, r: 24, flag: 'toucanBeak', label: 'Toucan beak' },
+      { x: 300, y: 382, r: 18, flag: 'redFlower', label: 'Red flower' },
+      { x: 519, y: 362, r: 22, flag: 'mushroomSpots', label: 'Mushroom spots' },
+      { x: 470, y: 400, r: 20, flag: 'frog', label: 'Pond frog' },
+    ],
+  },
+  {
+    id: 'riverbank',
+    name: 'Riverbank',
+    hint: 'Slow river — crocodile, kingfisher and lily pads',
+    draw: drawRiverbank,
+    diffs: [
+      { x: 520, y: 55, r: 42, flag: 'sunRays', label: 'Sun rays' },
+      { x: 129, y: 164, r: 20, flag: 'coconut', label: 'Coconut' },
+      { x: 306, y: 368, r: 26, flag: 'crocTeeth', label: 'Crocodile teeth' },
+      { x: 436, y: 180, r: 26, flag: 'kingfisher', label: 'Kingfisher' },
+      { x: 350, y: 384, r: 22, flag: 'lotus', label: 'Lotus flower' },
+      { x: 520, y: 322, r: 26, flag: 'turtle', label: 'Turtle' },
+      { x: 180, y: 250, r: 22, flag: 'dragonfly', label: 'Dragonfly' },
+    ],
+  },
+  {
+    id: 'canopy',
+    name: 'Canopy Trail',
+    hint: 'Deep canopy — parrots, sloth and a shy snake',
+    draw: drawCanopy,
+    diffs: [
+      { x: 343, y: 260, r: 30, flag: 'sunbeam', label: 'Sunbeam' },
+      { x: 262, y: 162, r: 26, flag: 'parrot2', label: 'Second parrot' },
+      { x: 428, y: 206, r: 26, flag: 'sloth', label: 'Sloth' },
+      { x: 340, y: 168, r: 24, flag: 'snake', label: 'Snake' },
+      { x: 96, y: 306, r: 20, flag: 'orchid', label: 'Orchid colour' },
+      { x: 150, y: 392, r: 22, flag: 'frog', label: 'Leaf frog' },
+      { x: 478, y: 374, r: 20, flag: 'mushroom', label: 'Mushroom cap' },
+    ],
+  },
 ];
-
-/** Paint one scene into `ctx` (panel-local space, w x h). `diffs` is a Set of
- *  difference ids to apply; an empty Set paints the left picture. */
-export function drawScene(ctx, sceneIndex, diffs, w, h) {
-  SCENES[sceneIndex].draw(ctx, w, h, diffs);
-}
-
-/** The differences of a scene, as a fresh array of {x, y, r, label}. */
-export function sceneDiffs(sceneIndex) {
-  return SCENES[sceneIndex].diffs.map((d) => ({ ...d }));
-}
-
-/** A Set holding every difference id of a scene (what the right panel applies). */
-export function allDiffs(sceneIndex) {
-  return new Set(SCENES[sceneIndex].diffs.map((_, i) => i));
-}

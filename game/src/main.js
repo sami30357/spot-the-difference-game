@@ -1,89 +1,64 @@
-// Reef Spotter — boot and the animation loop.
-// The canvas is a fixed 1280x720 logical field, scaled by CSS to fit the
-// window; the game updates on a fixed 1/60s step so play is identical at any
-// display rate. A ?shot= URL stages a frozen frame for screenshots.
-
-import { FIELD } from './config.js';
-import { createGame } from './game.js';
-import { createRenderer } from './render.js';
-import { createInput } from './input.js';
-import { ensureAudio, toggleMute } from './audio.js';
-import { shotFromUrl, stageNamedShot } from './shots.js';
-
-const STEP = 1 / 60;
+// Jungle Spotter v2 — bootstrap + main loop. Fixed 1280x720 canvas, scaled by
+// CSS to fit the window. ?shot=start|play|end presets the state for dossier
+// screenshots; ?seed= is accepted and ignored (scenes are hand-built, not
+// random). Exposes window.__game for the local Playwright harness.
+import { CANVAS_H, CANVAS_W } from './config.js';
+import { createGame, tick } from './game.js';
+import { createSfx } from './audio.js';
+import { attachInput, createUI } from './input.js';
+import { makePanelCanvases, paintPanels, render } from './render.js';
+import { applyShot } from './shots.js';
 
 const canvas = document.getElementById('game');
-const status = document.getElementById('status');
+canvas.width = CANVAS_W;
+canvas.height = CANVAS_H;
+const ctx = canvas.getContext('2d');
 
-const gameApi = createGame();
-const renderer = createRenderer(canvas);
-const input = createInput(canvas, {
-  onAnyGesture: ensureAudio,
-  onMark: (x, y) => gameApi.mark(x, y, performance.now()),
-  onHint: () => gameApi.hint(performance.now()),
-  onMagnifier: () => gameApi.toggleMagnifier(),
-  onRestart: () => gameApi.restart(),
-  onAdvance: () => gameApi.advance(performance.now()),
-});
+const game = createGame();
+const sfx = createSfx();
+const panels = makePanelCanvases();
+const ui = createUI(panels);
+paintPanels(panels, 0);
 
-// A staged screenshot frame, when the URL asks for one.
-const shot = shotFromUrl();
-if (shot.name) stageNamedShot(gameApi, shot.name);
+let lastScene = game.sceneIndex;
+let lastTickSecond = -1;
 
-/** Keep the canvas at the logical size and the status line current. */
-function resize() {
-  canvas.width = FIELD.width;
-  canvas.height = FIELD.height;
+const params = new URLSearchParams(location.search);
+const shot = params.get('shot');
+const sceneParam = Number(params.get('scene') ?? 0);
+if (shot) {
+  applyShot(game, shot, Number.isFinite(sceneParam) ? sceneParam : 0);
+  paintPanels(panels, game.sceneIndex);
+  lastScene = game.sceneIndex;
 }
 
-function announce() {
-  const g = gameApi.state;
-  if (!status) return;
-  const screen = g.screen;
-  if (screen === 'play') {
-    status.textContent = `${g.level + 1} of 3 scenes: ${gameApi.remaining()} differences left, ${Math.ceil(g.timeLeft)} seconds, score ${g.score}.`;
-  } else if (screen === 'title') {
-    status.textContent = 'Reef Spotter. Find 7 differences in each of 3 coral reef scenes. Press Enter to start.';
-  } else if (screen === 'level-done') {
-    status.textContent = `Scene complete! Time bonus ${g.levelBonus} points, score ${g.score}. Next scene coming up.`;
-  } else if (screen === 'win') {
-    status.textContent = `You found them all. Final score ${g.score}.`;
-  } else if (screen === 'game-over') {
-    status.textContent = `Time ran out. Score ${g.score}. Press R to try again.`;
-  }
-}
+attachInput(canvas, game, ui, sfx);
+
+// test hook: lets the Playwright harness drive the game and read state
+window.__game = game;
+window.__ui = ui;
+window.__panels = panels;
 
 let last = performance.now();
-let accumulator = 0;
-let announced = '';
-
 function frame(now) {
-  const dt = Math.min(0.25, (now - last) / 1000);
+  const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  accumulator += dt;
-  while (accumulator >= STEP) {
-    gameApi.update(STEP, now);
-    accumulator -= STEP;
+  if (game.sceneIndex !== lastScene) {
+    paintPanels(panels, game.sceneIndex);
+    lastScene = game.sceneIndex;
   }
-  renderer.render(gameApi, input, now);
-  // The line includes the whole seconds left, so the status line (and any
-  // test reading it) refreshes once a second while the clock runs.
-  const line = `${gameApi.state.screen}|${gameApi.state.level}|${gameApi.state.found.size}|${gameApi.state.score}|${Math.ceil(gameApi.state.timeLeft)}`;
-  if (line !== announced) {
-    announced = line;
-    announce();
+  const prevScreen = game.screen;
+  tick(game, dt);
+  if (game.screen === 'playing') {
+    const sec = Math.ceil(game.timeLeft);
+    if (sec !== lastTickSecond) {
+      lastTickSecond = sec;
+      if (sec <= 10 && sec > 0) sfx.tick();
+    }
   }
+  if (prevScreen === 'playing' && game.screen === 'win') sfx.win();
+  if (prevScreen === 'playing' && game.screen === 'levelComplete') sfx.levelClear();
+  render(ctx, game, ui);
   requestAnimationFrame(frame);
 }
-
-// U toggles sound on and off (the magnifier is M, handled by input.js).
-window.addEventListener('keydown', (event) => {
-  if (event.key.toLowerCase() === 'u') {
-    const muted = toggleMute();
-    if (status) status.textContent = muted ? 'Sound off.' : 'Sound on.';
-  }
-});
-
-resize();
-window.addEventListener('resize', resize);
 requestAnimationFrame(frame);

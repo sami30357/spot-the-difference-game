@@ -1,87 +1,76 @@
-// Reef Spotter — every sound is synthesized with WebAudio, no sound files.
-// The context is created lazily on the first user gesture, so the game stays
-// silent (and error-free) until the player interacts.
+// Jungle Spotter v2 — synthesized WebAudio sound effects. No sound files, no
+// network: every effect is a short oscillator envelope. The AudioContext is
+// created lazily on the first user gesture so autoplay rules never block it.
+export function createSfx() {
+  let ctx = null;
+  let muted = false;
 
-let ctx = null;
-let muted = false;
-
-/** Create (or resume) the audio context. Safe to call on every gesture. */
-export function ensureAudio() {
-  try {
+  function ac() {
     if (!ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      ctx = new AC();
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        ctx = new AC();
+      } catch {
+        return null;
+      }
     }
-    if (ctx.state === 'suspended') void ctx.resume();
-  } catch {
-    ctx = null;
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
   }
-}
 
-/** Toggle all sound. Returns the new muted state. */
-export function toggleMute() {
-  muted = !muted;
-  return muted;
-}
-
-export function isMuted() {
-  return muted;
-}
-
-/** One short oscillator blip: frequency, seconds, wave shape, gain. */
-function blip(freq, seconds, type, gain) {
-  if (!ctx || muted) return;
-  try {
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
+  function tone(freq, dur, type, vol, when = 0, slideTo = null) {
+    if (muted) return;
+    const c = ac();
+    if (!c) return;
+    const t0 = c.currentTime + when;
+    const osc = c.createOscillator();
+    const gain = c.createGain();
     osc.type = type;
-    osc.frequency.value = freq;
-    const now = ctx.currentTime;
-    amp.gain.setValueAtTime(gain, now);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + seconds);
-    osc.connect(amp);
-    amp.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + seconds + 0.02);
-  } catch {
-    // Sound is decoration; a failure must never break the game.
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(c.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
   }
-}
 
-/** A soft tick for the last ten seconds of the clock. */
-export function playTick() {
-  blip(880, 0.05, 'square', 0.05);
-}
-
-/** A soft click for cursor moves and button presses. */
-export function playClick() {
-  blip(620, 0.06, 'sine', 0.12);
-}
-
-/** A bright two-note chime when a difference is found. */
-export function playFound() {
-  blip(660, 0.12, 'sine', 0.22);
-  setTimeout(() => blip(990, 0.18, 'sine', 0.22), 90);
-}
-
-/** A low buzz when a click lands on nothing. */
-export function playMiss() {
-  blip(160, 0.18, 'sawtooth', 0.08);
-}
-
-/** A gentle rising chime when a hint is used. */
-export function playHint() {
-  blip(520, 0.1, 'triangle', 0.16);
-  setTimeout(() => blip(780, 0.14, 'triangle', 0.16), 80);
-}
-
-/** A short fanfare when a scene is completed. */
-export function playLevel() {
-  [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => blip(f, 0.2, 'sine', 0.2), i * 110));
-}
-
-/** A longer arpeggio for winning the whole game. */
-export function playWin() {
-  [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => setTimeout(() => blip(f, 0.28, 'sine', 0.2), i * 130));
+  return {
+    click() {
+      tone(660, 0.07, 'sine', 0.12);
+    },
+    correct() {
+      // bright two-note chirp
+      tone(880, 0.1, 'sine', 0.16);
+      tone(1318, 0.16, 'sine', 0.16, 0.09);
+    },
+    wrong() {
+      // low dull buzz
+      tone(160, 0.22, 'sawtooth', 0.1, 0, 110);
+    },
+    hint() {
+      // soft chime arpeggio
+      tone(1046, 0.12, 'triangle', 0.14);
+      tone(1568, 0.18, 'triangle', 0.12, 0.1);
+    },
+    levelClear() {
+      // three rising notes when a scene is cleared
+      tone(659, 0.12, 'triangle', 0.15);
+      tone(880, 0.12, 'triangle', 0.15, 0.1);
+      tone(1174, 0.22, 'triangle', 0.15, 0.2);
+    },
+    win() {
+      // little jungle fanfare
+      [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, 'triangle', 0.16, i * 0.12));
+      tone(1318, 0.4, 'triangle', 0.14, 0.5);
+    },
+    tick() {
+      tone(1200, 0.05, 'square', 0.06);
+    },
+    setMuted(m) {
+      muted = m;
+    },
+  };
 }

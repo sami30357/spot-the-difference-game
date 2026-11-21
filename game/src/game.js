@@ -1,302 +1,167 @@
-// Reef Spotter — the rules and the state machine.
-// Screens: title, play, level-done, win, game-over. One level is one scene with
-// seven differences; finding all seven ends the level with a time bonus, and
-// finishing all three scenes wins the game. The clock runs only while playing.
-
+// Jungle Spotter v2 — game state machine: title, playing, level-complete, win,
+// game-over. Pure logic; rendering lives in render.js, input in input.js.
 import {
-  PANEL,
-  DIFFS_PER_SCENE,
-  LEVELS,
-  LEVEL_SECONDS,
-  HINTS_PER_LEVEL,
-  POINTS_FOUND,
-  POINTS_MISS,
-  TIME_BONUS_PER_SECOND,
-  HIT_RADIUS,
+  SCENES,
+} from './scenes.js';
+import {
   BEST_KEY,
-  SCENE_NAMES,
+  HINTS_PER_SCENE,
+  SCORE_FOUND,
+  SCORE_WRONG,
+  TIME_BONUS_PER_SEC,
+  TIME_PER_SCENE,
 } from './config.js';
-import { sceneDiffs } from './scenes.js';
-import { playFound, playMiss, playHint, playLevel, playWin, playTick, playClick } from './audio.js';
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_LEVEL_DONE = 'level-done';
-export const SCREEN_WIN = 'win';
-export const SCREEN_OVER = 'game-over';
-
-const LEVEL_DONE_MS = 3000;
-const HINT_MS = 2500;
-const MISS_FLASH_MS = 350;
-
-function loadBest() {
+export function loadBest() {
   try {
-    return Number(window.localStorage.getItem(BEST_KEY)) || 0;
+    return Number(localStorage.getItem(BEST_KEY)) || 0;
   } catch {
     return 0;
   }
 }
 
-function saveBest(score) {
+export function saveBest(score) {
   try {
-    window.localStorage.setItem(BEST_KEY, String(score));
+    localStorage.setItem(BEST_KEY, String(score));
   } catch {
-    // Best score is a nicety; storage failure must not break the game.
+    // storage unavailable (private mode) — best score just won't persist
   }
 }
 
 export function createGame() {
-  const game = {
-    screen: SCREEN_TITLE,
-    level: 0,
+  return {
+    screen: 'title', // title | playing | levelComplete | win | gameOver
+    sceneIndex: 0,
     found: new Set(),
+    hinted: null, // diff currently revealed by a hint, or null
+    hintTimer: 0,
     score: 0,
     best: loadBest(),
-    timeLeft: LEVEL_SECONDS,
-    hintsLeft: HINTS_PER_LEVEL,
-    magnifierOn: false,
-    hintPulse: null, // { diff, until }
-    missFlashUntil: 0,
-    levelBonus: 0,
-    levelDoneUntil: 0,
-    frozen: false, // staged screenshots: the clock and timers stand still
-    lastTickSecond: -1,
+    timeLeft: TIME_PER_SCENE,
+    hintsLeft: HINTS_PER_SCENE,
+    wrongs: 0,
+    foundCount: 0,
+    totalFound: 0,
     message: '',
+    messageTimer: 0,
+    flash: null, // {x, y, panel, ok} — brief click feedback ring
+    flashTimer: 0,
+    crosshair: { panel: 'A', x: 300, y: 220 },
+    sceneStartScore: 0,
   };
+}
 
-  function diffs() {
-    return sceneDiffs(game.level);
-  }
+export function currentScene(game) {
+  return SCENES[game.sceneIndex];
+}
 
-  function resetLevel(level) {
-    game.level = level;
-    game.found = new Set();
-    game.timeLeft = LEVEL_SECONDS;
-    game.hintsLeft = HINTS_PER_LEVEL;
-    game.hintPulse = null;
-    game.levelBonus = 0;
-    game.lastTickSecond = -1;
-  }
+export function diffsLeft(game) {
+  return currentScene(game).diffs.length - game.found.size;
+}
 
-  function startGame() {
-    game.score = 0;
-    resetLevel(0);
-    game.screen = SCREEN_PLAY;
-    playClick();
-  }
+export function startGame(game) {
+  game.sceneIndex = 0;
+  game.score = 0;
+  game.totalFound = 0;
+  game.wrongs = 0;
+  game.best = loadBest();
+  beginScene(game);
+  game.screen = 'playing';
+}
 
-  function completeLevel(now) {
-    game.levelBonus = Math.ceil(game.timeLeft) * TIME_BONUS_PER_SECOND;
-    game.score += game.levelBonus;
-    game.screen = SCREEN_LEVEL_DONE;
-    game.levelDoneUntil = now + LEVEL_DONE_MS;
-    playLevel();
-  }
+export function beginScene(game) {
+  game.found = new Set();
+  game.hinted = null;
+  game.hintTimer = 0;
+  game.timeLeft = TIME_PER_SCENE;
+  game.hintsLeft = HINTS_PER_SCENE;
+  game.sceneStartScore = game.score;
+  game.message = '';
+  game.messageTimer = 0;
+  game.flash = null;
+}
 
-  function advanceLevel(now) {
-    if (game.level + 1 >= LEVELS) {
-      game.screen = SCREEN_WIN;
+export function timeBonus(game) {
+  return Math.round(game.timeLeft) * TIME_BONUS_PER_SEC;
+}
+
+export function markFound(game, diffIndex, panel) {
+  if (game.screen !== 'playing' || game.found.has(diffIndex)) return false;
+  game.found.add(diffIndex);
+  game.foundCount += 1;
+  game.totalFound += 1;
+  game.score += SCORE_FOUND;
+  game.flash = { x: currentScene(game).diffs[diffIndex].x, y: currentScene(game).diffs[diffIndex].y, panel, ok: true };
+  game.flashTimer = 0.5;
+  const left = diffsLeft(game);
+  if (left === 0) {
+    const bonus = timeBonus(game);
+    game.score += bonus;
+    game.message = `Scene clear! Time bonus +${bonus}`;
+    game.messageTimer = 2.5;
+    if (game.sceneIndex + 1 >= SCENES.length) {
+      game.screen = 'win';
       if (game.score > game.best) {
         game.best = game.score;
         saveBest(game.score);
       }
-      playWin();
-      return;
+    } else {
+      game.screen = 'levelComplete';
     }
-    resetLevel(game.level + 1);
-    game.screen = SCREEN_PLAY;
+  } else {
+    game.message = `Found! ${left} left`;
+    game.messageTimer = 1.2;
   }
+  return true;
+}
 
-  function gameOver() {
-    game.screen = SCREEN_OVER;
+export function markWrong(game, x, y, panel) {
+  if (game.screen !== 'playing') return;
+  game.score = Math.max(0, game.score + SCORE_WRONG);
+  game.wrongs += 1;
+  game.flash = { x, y, panel, ok: false };
+  game.flashTimer = 0.45;
+  game.message = 'Not a difference — −10';
+  game.messageTimer = 1.2;
+}
+
+export function useHint(game) {
+  if (game.screen !== 'playing' || game.hintsLeft <= 0) return false;
+  const remaining = currentScene(game).diffs
+    .map((d, i) => i)
+    .filter((i) => !game.found.has(i));
+  if (remaining.length === 0) return false;
+  game.hintsLeft -= 1;
+  // reveal the first unfound difference with a pulsing gold ring
+  game.hinted = remaining[0];
+  game.hintTimer = 3;
+  game.message = `Hint: ${currentScene(game).diffs[remaining[0]].label}`;
+  game.messageTimer = 2;
+  return true;
+}
+
+export function nextScene(game) {
+  if (game.screen !== 'levelComplete') return;
+  game.sceneIndex += 1;
+  beginScene(game);
+  game.screen = 'playing';
+}
+
+export function tick(game, dt) {
+  if (game.messageTimer > 0) game.messageTimer -= dt;
+  if (game.flashTimer > 0) game.flashTimer -= dt;
+  if (game.hintTimer > 0) {
+    game.hintTimer -= dt;
+    if (game.hintTimer <= 0) game.hinted = null;
+  }
+  if (game.screen !== 'playing') return;
+  game.timeLeft -= dt;
+  if (game.timeLeft <= 0) {
+    game.timeLeft = 0;
+    game.screen = 'gameOver';
     if (game.score > game.best) {
       game.best = game.score;
       saveBest(game.score);
     }
-    playMiss();
   }
-
-  /** Mark the field position (x, y): find a difference or count a miss. */
-  function mark(x, y, now) {
-    if (game.screen === SCREEN_TITLE) {
-      startGame();
-      return;
-    }
-    if (game.screen === SCREEN_LEVEL_DONE) {
-      advanceLevel(now);
-      return;
-    }
-    if (game.screen === SCREEN_WIN || game.screen === SCREEN_OVER) {
-      startGame();
-      return;
-    }
-    if (game.screen !== SCREEN_PLAY) return;
-
-    // Which panel was clicked, and where inside it?
-    let local = null;
-    if (x >= PANEL.leftX && x < PANEL.leftX + PANEL.w && y >= PANEL.y && y < PANEL.y + PANEL.h) {
-      local = { x: x - PANEL.leftX, y: y - PANEL.y };
-    } else if (x >= PANEL.rightX && x < PANEL.rightX + PANEL.w && y >= PANEL.y && y < PANEL.y + PANEL.h) {
-      local = { x: x - PANEL.rightX, y: y - PANEL.y };
-    }
-    if (!local) return; // Clicked the HUD or the gap: nothing happens.
-
-    const list = diffs();
-    // A click on a difference already found is ignored, not a miss.
-    for (let i = 0; i < list.length; i += 1) {
-      if (!game.found.has(i)) continue;
-      const d = list[i];
-      const dx = local.x - d.x;
-      const dy = local.y - d.y;
-      if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) return;
-    }
-    let hit = -1;
-    for (let i = 0; i < list.length; i += 1) {
-      if (game.found.has(i)) continue;
-      const d = list[i];
-      const dx = local.x - d.x;
-      const dy = local.y - d.y;
-      if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) {
-        hit = i;
-        break;
-      }
-    }
-    if (hit >= 0) {
-      game.found.add(hit);
-      game.score += POINTS_FOUND;
-      game.hintPulse = null;
-      playFound();
-      if (game.found.size === DIFFS_PER_SCENE) completeLevel(now);
-    } else {
-      game.score = Math.max(0, game.score - POINTS_MISS);
-      game.missFlashUntil = now + MISS_FLASH_MS;
-      playMiss();
-    }
-  }
-
-  /** Spend one hint: pulse the next unfound difference for a few seconds. */
-  function hint(now) {
-    if (game.screen !== SCREEN_PLAY) return;
-    if (game.hintsLeft <= 0) {
-      game.message = 'No hints left!';
-      return;
-    }
-    const list = diffs();
-    const remaining = list.map((_, i) => i).filter((i) => !game.found.has(i));
-    if (remaining.length === 0) return;
-    const pick = remaining[Math.floor(Math.random() * remaining.length)];
-    game.hintPulse = { diff: pick, until: now + HINT_MS };
-    game.hintsLeft -= 1;
-    game.message = '';
-    playHint();
-  }
-
-  function toggleMagnifier() {
-    game.magnifierOn = !game.magnifierOn;
-    playClick();
-  }
-
-  function restart() {
-    startGame();
-  }
-
-  function advance(now) {
-    if (game.screen === SCREEN_TITLE) startGame();
-    else if (game.screen === SCREEN_LEVEL_DONE) advanceLevel(now);
-    else if (game.screen === SCREEN_WIN || game.screen === SCREEN_OVER) startGame();
-  }
-
-  /** Advance the clock and any timed overlays. `dt` is seconds, `now` is ms. */
-  function update(dt, now) {
-    if (game.frozen) return;
-    if (game.screen === SCREEN_PLAY) {
-      game.timeLeft -= dt;
-      const whole = Math.ceil(game.timeLeft);
-      if (whole <= 10 && whole > 0 && whole !== game.lastTickSecond) {
-        game.lastTickSecond = whole;
-        playTick();
-      }
-      if (game.timeLeft <= 0) {
-        game.timeLeft = 0;
-        gameOver();
-      }
-    } else if (game.screen === SCREEN_LEVEL_DONE && now >= game.levelDoneUntil) {
-      advanceLevel(now);
-    }
-    if (game.hintPulse && now >= game.hintPulse.until) game.hintPulse = null;
-  }
-
-  /** How many differences are still unfound in this scene. */
-  function remaining() {
-    return DIFFS_PER_SCENE - game.found.size;
-  }
-
-  /** True while the red miss flash is still showing. */
-  function missFlashing(now) {
-    return now < game.missFlashUntil;
-  }
-
-  function sceneName() {
-    return SCENE_NAMES[game.level];
-  }
-
-  return {
-    state: game,
-    mark,
-    hint,
-    toggleMagnifier,
-    restart,
-    advance,
-    update,
-    remaining,
-    missFlashing,
-    sceneName,
-    startGame,
-    resetLevel,
-  };
-}
-
-
-/**
- * Stage a fixed frame for a screenshot (?shot=start|play|play2|win).
- * The frame is what real play looks like — found markers on, several
- * differences still unfound, the counter showing what remains — and the clock
- * is frozen so the frame never changes while the screenshot is taken.
- * Returns the screen the frame shows.
- */
-export function stageShot(gameApi, name) {
-  const g = gameApi.state;
-  g.frozen = true;
-  if (name === 'play2') {
-    gameApi.resetLevel(1);
-    g.found = new Set([1, 3, 4, 5]); // four found, three still to find
-    g.score = 400;
-    g.timeLeft = 98;
-    g.hintsLeft = 2;
-    g.screen = SCREEN_PLAY;
-    return SCREEN_PLAY;
-  }
-  if (name === 'win') {
-    gameApi.resetLevel(2);
-    g.found = new Set([0, 1, 2, 3, 4, 5, 6]);
-    g.score = 2450;
-    g.timeLeft = 61;
-    g.screen = SCREEN_WIN;
-    if (g.score > g.best) g.best = g.score;
-    return SCREEN_WIN;
-  }
-  if (name === 'play') {
-    gameApi.resetLevel(0);
-    g.found = new Set([0, 2, 4]); // three found, four still to find
-    g.score = 300;
-    g.timeLeft = 132;
-    g.hintsLeft = 2;
-    g.screen = SCREEN_PLAY;
-    return SCREEN_PLAY;
-  }
-  // Any other name (including 'start') is the title screen.
-  gameApi.resetLevel(0);
-  g.score = 0;
-  g.screen = SCREEN_TITLE;
-  return SCREEN_TITLE;
 }

@@ -1,28 +1,45 @@
-// Reef Spotter — the staged frames behind ?shot=start|play|play2|win.
-// Each shot is a real game state reached through the game's own rules (the
-// staged finds are marked through the same `found` set real clicks fill), so
-// the frame is what genuine play looks like and the same URL always gives the
-// same frame: the clock is frozen while a shot is staged.
+// Jungle Spotter v2 — screenshot presets for ?shot= modes, used by the
+// dossier screenshots and by the local Playwright harness. Each preset puts
+// the game in a deterministic, photogenic state:
+//   start — title screen over scene 1
+//   play  — mid-game: 3 differences found (markers on both panels),
+//           4 still hiding, counter + timer visible; ?scene=N picks the scene
+//   end   — win screen after all 3 scenes
+import { SCENES } from './scenes.js';
+import { beginScene, markFound } from './game.js';
 
-import { stageShot } from './game.js';
-
-/** Read the ?shot= parameter (and an optional ?seed=) from the page URL. */
-export function shotFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    name: params.get('shot') || '',
-    seed: Number(params.get('seed') || 1),
-  };
-}
-
-/** The shot names this game stages, in the order shots.json lists them. */
-export const SHOT_NAMES = ['play', 'play2', 'start', 'win'];
-
-/**
- * Stage the named shot on `gameApi` and return the screen it shows.
- * An empty or unknown name leaves the game on its title screen.
- */
-export function stageNamedShot(gameApi, name) {
-  if (!name) return null;
-  return stageShot(gameApi, name);
+export function applyShot(game, mode, sceneIndex = 0) {
+  const scene = Math.max(0, Math.min(SCENES.length - 1, sceneIndex | 0));
+  if (mode === 'start') {
+    game.screen = 'title';
+    game.sceneIndex = 0;
+    beginScene(game);
+    return;
+  }
+  if (mode === 'play') {
+    game.sceneIndex = scene;
+    game.score = 0;
+    game.totalFound = 0;
+    beginScene(game);
+    game.screen = 'playing';
+    // mark the first three differences as found — deterministic, shows markers
+    // (each adds +100, so the score reads 300, matching the 3 found)
+    for (const i of [0, 2, 4]) markFound(game, i, 'A');
+    game.timeLeft = 118;
+    game.message = 'Found! 4 left';
+    game.messageTimer = 999;
+    return;
+  }
+  if (mode === 'end') {
+    game.sceneIndex = SCENES.length - 1;
+    beginScene(game);
+    game.score = 2450;
+    game.totalFound = 21;
+    game.best = 2450;
+    game.screen = 'win';
+    return;
+  }
+  // unknown mode: fall back to the title screen
+  game.screen = 'title';
+  beginScene(game);
 }

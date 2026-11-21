@@ -1,102 +1,159 @@
-// Reef Spotter — mouse and keyboard input in one place.
-// The canvas is scaled to the window; every pointer position is converted back
-// to the 1280x720 logical field before the game sees it. The keyboard cursor
-// is a crosshair the arrow keys move; Enter or Space marks where it stands.
-// Mouse movement also moves the crosshair, so the two never disagree.
+// Jungle Spotter v2 — mouse + keyboard input.
+// Mouse: move tracks the panel + scene coords (for the magnifier), click
+// hit-tests the nearest unfound difference in either panel. Keyboard: arrows
+// move a crosshair, Enter/Space marks it, H hints, M toggles the magnifier,
+// Enter starts / advances, R restarts, Esc returns to the title.
+import { CROSSHAIR_FINE_STEP, CROSSHAIR_STEP, PANEL_A_X, PANEL_B_X, PANEL_H, PANEL_W, PANEL_Y } from './config.js';
+import { currentScene, markFound, markWrong, nextScene, startGame, useHint } from './game.js';
 
-import { FIELD, CURSOR_STEP, CURSOR_STEP_FAST, KEYS } from './config.js';
-
-/** Convert a pointer event's client position to logical field coordinates. */
-function toField(canvas, clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = FIELD.width / rect.width;
-  const scaleY = FIELD.height / rect.height;
+export function createUI(panels) {
   return {
-    x: (clientX - rect.left) * scaleX,
-    y: (clientY - rect.top) * scaleY,
+    panels,
+    mouse: { x: 0, y: 0, panel: null, inside: false },
+    magnifier: false,
+    keyboardMode: false,
   };
 }
 
-/**
- * Attach input handling to `canvas`.
- * `hooks` is { onMark(x, y), onHint(), onMagnifier(), onRestart(), onAdvance(),
- *               onAnyGesture() } — every hook is optional.
- * Returns { cursor, mouse, destroy() }.
- */
-export function createInput(canvas, hooks) {
-  const cursor = { x: FIELD.width / 2, y: 320, visible: true };
-  const mouse = { x: FIELD.width / 2, y: 320, inside: false };
+export function panelAt(clientX, clientY, rect, scale) {
+  const x = (clientX - rect.left) / scale;
+  const y = (clientY - rect.top) / scale;
+  if (y >= PANEL_Y && y <= PANEL_Y + PANEL_H) {
+    if (x >= PANEL_A_X && x <= PANEL_A_X + PANEL_W) {
+      return { panel: 'A', x: x - PANEL_A_X, y: y - PANEL_Y };
+    }
+    if (x >= PANEL_B_X && x <= PANEL_B_X + PANEL_W) {
+      return { panel: 'B', x: x - PANEL_B_X, y: y - PANEL_Y };
+    }
+  }
+  return { panel: null, x: 0, y: 0 };
+}
 
-  function gesture() {
-    if (hooks.onAnyGesture) hooks.onAnyGesture();
+export function attachInput(canvas, game, ui, sfx) {
+  function scaleOf() {
+    const rect = canvas.getBoundingClientRect();
+    return { rect, scale: rect.width / canvas.width };
   }
 
-  function onPointerMove(event) {
-    const p = toField(canvas, event.clientX, event.clientY);
-    mouse.x = p.x;
-    mouse.y = p.y;
-    mouse.inside = true;
-    cursor.x = p.x;
-    cursor.y = p.y;
-  }
+  canvas.addEventListener('mousemove', (e) => {
+    const { rect, scale } = scaleOf();
+    const hit = panelAt(e.clientX, e.clientY, rect, scale);
+    ui.mouse.x = hit.x;
+    ui.mouse.y = hit.y;
+    ui.mouse.panel = hit.panel;
+    ui.mouse.inside = hit.panel !== null;
+    ui.keyboardMode = false;
+  });
 
-  function onPointerDown(event) {
-    gesture();
-    const p = toField(canvas, event.clientX, event.clientY);
-    mouse.x = p.x;
-    mouse.y = p.y;
-    mouse.inside = true;
-    cursor.x = p.x;
-    cursor.y = p.y;
-    if (hooks.onMark) hooks.onMark(p.x, p.y);
-  }
+  canvas.addEventListener('mouseleave', () => {
+    ui.mouse.inside = false;
+    ui.mouse.panel = null;
+  });
 
-  function onKeyDown(event) {
-    const key = event.key;
-    if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
-      event.preventDefault();
-      gesture();
-      const step = event.shiftKey ? CURSOR_STEP_FAST : CURSOR_STEP;
-      if (key === 'ArrowLeft') cursor.x = Math.max(0, cursor.x - step);
-      if (key === 'ArrowRight') cursor.x = Math.min(FIELD.width, cursor.x + step);
-      if (key === 'ArrowUp') cursor.y = Math.max(0, cursor.y - step);
-      if (key === 'ArrowDown') cursor.y = Math.min(FIELD.height, cursor.y + step);
+  canvas.addEventListener('click', (e) => {
+    if (game.screen === 'title') {
+      startGame(game);
+      sfx.click();
       return;
     }
-    if (key === 'Enter' || key === ' ') {
-      event.preventDefault();
-      gesture();
-      if (hooks.onMark) hooks.onMark(cursor.x, cursor.y);
+    if (game.screen === 'levelComplete') {
+      nextScene(game);
+      sfx.click();
       return;
     }
-    const lower = key.toLowerCase();
-    if (lower === KEYS.hint) {
-      gesture();
-      if (hooks.onHint) hooks.onHint();
-    } else if (lower === KEYS.magnifier) {
-      gesture();
-      if (hooks.onMagnifier) hooks.onMagnifier();
-    } else if (lower === KEYS.restart) {
-      gesture();
-      if (hooks.onRestart) hooks.onRestart();
-    } else if (key === 'Escape') {
-      // Escape also advances past overlays, like Enter.
-      gesture();
-      if (hooks.onAdvance) hooks.onAdvance();
+    if (game.screen === 'win' || game.screen === 'gameOver') {
+      startGame(game);
+      sfx.click();
+      return;
     }
+    const { rect, scale } = scaleOf();
+    const hit = panelAt(e.clientX, e.clientY, rect, scale);
+    if (!hit.panel) return;
+    tryMark(game, hit.x, hit.y, hit.panel, sfx);
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (game.screen === 'title') {
+        startGame(game);
+        sfx.click();
+      } else if (game.screen === 'levelComplete') {
+        nextScene(game);
+        sfx.click();
+      } else if (game.screen === 'win' || game.screen === 'gameOver') {
+        startGame(game);
+        sfx.click();
+      } else if (ui.keyboardMode) {
+        tryMark(game, game.crosshair.x, game.crosshair.y, game.crosshair.panel, sfx);
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.key === ' ') {
+      if (game.screen === 'playing' && ui.keyboardMode) {
+        tryMark(game, game.crosshair.x, game.crosshair.y, game.crosshair.panel, sfx);
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      if (game.screen !== 'title') startGame(game);
+      return;
+    }
+    if (e.key === 'Escape') {
+      game.screen = 'title';
+      return;
+    }
+    if (e.key === 'h' || e.key === 'H') {
+      if (game.screen === 'playing' && useHint(game)) sfx.hint();
+      return;
+    }
+    if (e.key === 'm' || e.key === 'M') {
+      ui.magnifier = !ui.magnifier;
+      sfx.click();
+      return;
+    }
+    if (e.key.startsWith('Arrow')) {
+      if (game.screen !== 'playing') return;
+      ui.keyboardMode = true;
+      const step = e.shiftKey ? CROSSHAIR_FINE_STEP : CROSSHAIR_STEP;
+      const c = game.crosshair;
+      if (e.key === 'ArrowLeft') c.x = Math.max(0, c.x - step);
+      if (e.key === 'ArrowRight') c.x = Math.min(PANEL_W, c.x + step);
+      if (e.key === 'ArrowUp') c.y = Math.max(0, c.y - step);
+      if (e.key === 'ArrowDown') c.y = Math.min(PANEL_H, c.y + step);
+      // crosshair switches panel with Tab-like wrap: hold Alt+Arrow to swap
+      if (e.altKey) c.panel = c.panel === 'A' ? 'B' : 'A';
+      e.preventDefault();
+    }
+    if (e.key === 'Tab') {
+      if (game.screen === 'playing') {
+        ui.keyboardMode = true;
+        game.crosshair.panel = game.crosshair.panel === 'A' ? 'B' : 'A';
+        e.preventDefault();
+      }
+    }
+  });
+}
+
+function tryMark(game, x, y, panel, sfx) {
+  if (game.screen !== 'playing') return;
+  const scene = currentScene(game);
+  let best = null;
+  let bestD = Infinity;
+  scene.diffs.forEach((d, i) => {
+    if (game.found.has(i)) return;
+    const dist = Math.hypot(d.x - x, d.y - y);
+    if (dist < d.r + 10 && dist < bestD) {
+      best = i;
+      bestD = dist;
+    }
+  });
+  if (best !== null) {
+    markFound(game, best, panel);
+    sfx.correct();
+  } else {
+    markWrong(game, x, y, panel);
+    sfx.wrong();
   }
-
-  canvas.addEventListener('pointermove', onPointerMove);
-  canvas.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('keydown', onKeyDown);
-
-  return {
-    cursor,
-    mouse,
-    destroy() {
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    },
-  };
 }

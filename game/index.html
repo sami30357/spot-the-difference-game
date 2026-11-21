@@ -3,39 +3,165 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Jungle Spotter — a bright daylight jungle spot-the-difference game: 3 scenes, 7 differences each.">
-<link rel="icon" href="data:,">
-<title>Jungle Spotter — Spot the Difference</title>
+<meta name="description" content="Starlight Station — a bright space spot-the-difference game. Find 7 differences in each of 3 scenes: a moon base, an orbital station and an alien planet garden.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%98%85%3C/text%3E%3C/svg%3E">
+<title>Starlight Station — Spot the Difference</title>
 <style>
-  html, body {
+  :root {
+    --ink: #eef4ff;
+    --dim: #9fb2d8;
+    --accent: #ffd166;
+    --good: #3ddc84;
+    --bad: #ff5d73;
+    --panel: #101a33;
+    --border: #2c3f6e;
+  }
+  * { box-sizing: border-box; }
+  body {
     margin: 0;
-    padding: 0;
-    background: #12351a;
-    height: 100%;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(1200px 700px at 50% -10%, #1b2450 0%, #0a0f22 60%, #05070f 100%);
+    color: var(--ink);
+    min-height: 100vh;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    font-family: system-ui, -apple-system, sans-serif;
   }
-  #wrap {
-    width: min(100vw, calc(100vh * 1280 / 720));
-    aspect-ratio: 1280 / 720;
-  }
-  canvas {
+  header {
     width: 100%;
-    height: 100%;
-    display: block;
-    cursor: crosshair;
-    border-radius: 6px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+    max-width: 1330px;
+    padding: 14px 18px 6px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 22px;
+  }
+  h1 { font-size: 26px; margin: 0; letter-spacing: 0.5px; }
+  h1 .star { color: var(--accent); }
+  .subtitle { color: var(--dim); font-size: 14px; }
+  #hud {
+    width: 100%;
+    max-width: 1330px;
+    padding: 6px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 22px;
+    font-size: 15px;
+  }
+  #hud .stat b { color: var(--accent); }
+  #hud-timer { font-variant-numeric: tabular-nums; font-weight: 700; }
+  #hud-timer.urgent { color: var(--bad); }
+  #hud-timer-bar-wrap {
+    flex: 1 1 160px; height: 10px; min-width: 120px;
+    background: #1a2547; border-radius: 6px; overflow: hidden;
+  }
+  #hud-timer-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #2ec4b6, #ffd166); transition: width 0.3s linear; }
+  #hud-dots { display: inline-flex; gap: 6px; vertical-align: middle; }
+  .dot {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--dim); background: transparent; display: inline-block;
+  }
+  .dot.found { background: var(--good); border-color: var(--good); }
+  .btn {
+    font: inherit; font-size: 14px; cursor: pointer;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.active { background: var(--accent); color: #1a1405; border-color: var(--accent); font-weight: 700; }
+  .btn.primary { background: var(--accent); color: #1a1405; border-color: var(--accent); font-weight: 700; font-size: 17px; padding: 11px 26px; }
+  main { position: relative; padding: 6px 0 4px; }
+  canvas { display: block; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,0.55); }
+  .screen {
+    position: absolute; inset: 0; border-radius: 10px;
+    background: rgba(5, 8, 18, 0.88);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 12px; padding: 24px; z-index: 5;
+  }
+  .screen.hidden { display: none; }
+  .screen h2 { margin: 0; font-size: 34px; }
+  .screen p { margin: 0; color: var(--dim); font-size: 16px; max-width: 520px; line-height: 1.5; }
+  .screen .big { font-size: 20px; color: var(--ink); font-weight: 700; }
+  .screen .rules { font-size: 14px; }
+  .screen .rules b { color: var(--accent); }
+  footer {
+    width: 100%; max-width: 1330px; padding: 8px 18px 20px;
+    color: var(--dim); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 20px;
+  }
+  footer kbd {
+    background: #1a2547; border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 6px; font-family: inherit; color: var(--ink);
   }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <canvas id="game" width="1280" height="720"></canvas>
-  <noscript><p style="color:#fff;text-align:center">Jungle Spotter needs JavaScript enabled.</p></noscript>
+<header>
+  <h1><span class="star">★</span> Starlight Station</h1>
+  <span class="subtitle">Spot the Difference — a bright space adventure in 3 scenes</span>
+</header>
+
+<div id="hud">
+  <span class="stat" id="hud-scene">Scene 1 / 3 — Moon Base Alpha</span>
+  <span class="stat">Score: <b id="hud-score">0</b></span>
+  <span class="stat">Best: <b id="hud-best">0</b></span>
+  <span class="stat">Time: <b id="hud-timer">2:30</b></span>
+  <span id="hud-timer-bar-wrap"><span id="hud-timer-bar"></span></span>
+  <span class="stat"><b id="hud-left">7 differences left</b> <span id="hud-dots"></span></span>
+  <span class="stat" id="hud-hints">Hints: 3</span>
+  <button class="btn" id="btn-hint" type="button">💡 Hint (H)</button>
+  <button class="btn" id="btn-magnifier" type="button">🔍 Magnifier (M)</button>
+  <button class="btn" id="btn-mute" type="button">🔊 Sound on</button>
 </div>
+
+<main>
+  <canvas id="game-canvas" width="1292" height="652"></canvas>
+
+  <div class="screen" id="screen-title">
+    <h2>★ Starlight Station ★</h2>
+    <p class="big">Two pictures look the same — but 7 things are different!</p>
+    <p class="rules">Click a difference (or move the gold cursor with the <b>arrow keys</b> and press <b>Enter</b>).
+      Each find is <b>+100</b>, a wrong click is <b>−10</b>. Finish a scene before the <b>2:30</b> timer runs out
+      for a time bonus. Press <b>H</b> for a hint (3 per scene) and <b>M</b> for the 2× magnifier.</p>
+    <p id="title-best">Find all 7 differences in each of the 3 space scenes!</p>
+    <button class="btn primary" id="btn-start" type="button">▶ Start the mission</button>
+  </div>
+
+  <div class="screen hidden" id="screen-level">
+    <h2>Scene complete! 🎉</h2>
+    <p class="big" id="level-found">You found all 7 differences!</p>
+    <p id="level-bonus">Time bonus: +0</p>
+    <p id="level-score">Score: 0</p>
+    <button class="btn primary" id="btn-next" type="button">Next scene ▶</button>
+  </div>
+
+  <div class="screen hidden" id="screen-win">
+    <h2>🏆 Mission complete!</h2>
+    <p class="big" id="win-found">You found all 21 differences across 3 space scenes!</p>
+    <p id="win-total">Final score: 0</p>
+    <p id="win-best">Best score: 0</p>
+    <button class="btn primary" data-restart type="button">↻ Play again</button>
+  </div>
+
+  <div class="screen hidden" id="screen-over">
+    <h2>⏰ Time's up!</h2>
+    <p class="big">The timer ran out before you found every difference.</p>
+    <p id="over-score">Score: 0</p>
+    <button class="btn primary" data-restart type="button">↻ Try again</button>
+  </div>
+</main>
+
+<footer>
+  <span><kbd>Click</kbd> mark a difference</span>
+  <span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move cursor</span>
+  <span><kbd>Enter</kbd> mark at cursor</span>
+  <span><kbd>Shift</kbd> + arrows = fine move</span>
+  <span><kbd>H</kbd> hint</span>
+  <span><kbd>M</kbd> magnifier 2×</span>
+</footer>
+
 <script type="module" src="./src/main.js"></script>
+<script type="module" src="./src/shots.js"></script>
 </body>
 </html>

@@ -1,64 +1,90 @@
-// Jungle Spotter v2 — bootstrap + main loop. Fixed 1280x720 canvas, scaled by
-// CSS to fit the window. ?shot=start|play|end presets the state for dossier
-// screenshots; ?seed= is accepted and ignored (scenes are hand-built, not
-// random). Exposes window.__game for the local Playwright harness.
-import { CANVAS_H, CANVAS_W } from './config.js';
-import { createGame, tick } from './game.js';
-import { createSfx } from './audio.js';
-import { attachInput, createUI } from './input.js';
-import { makePanelCanvases, paintPanels, render } from './render.js';
-import { applyShot } from './shots.js';
+// Starlight Station — bootstrap + animation loop.
+// Wires the game state, renderer and input together, runs the timer, and
+// swaps the title / level-complete / win / game-over overlays.
 
-const canvas = document.getElementById('game');
-canvas.width = CANVAS_W;
-canvas.height = CANVAS_H;
-const ctx = canvas.getContext('2d');
+import { CONFIG } from './config.js';
+import { createGame, SCREENS } from './game.js';
+import { createRenderer } from './render.js';
+import { bindInput } from './input.js';
+import { sfx } from './audio.js';
 
-const game = createGame();
-const sfx = createSfx();
-const panels = makePanelCanvases();
-const ui = createUI(panels);
-paintPanels(panels, 0);
+const canvas = document.getElementById('game-canvas');
+const overlays = {
+  title: document.getElementById('screen-title'),
+  level: document.getElementById('screen-level'),
+  win: document.getElementById('screen-win'),
+  over: document.getElementById('screen-over'),
+};
 
-let lastScene = game.sceneIndex;
-let lastTickSecond = -1;
+const game = createGame((st) => {
+  renderer.updateHud();
+  showScreen(st);
+});
+const renderer = createRenderer(canvas, game);
+bindInput(canvas, renderer, game);
 
-const params = new URLSearchParams(location.search);
-const shot = params.get('shot');
-const sceneParam = Number(params.get('scene') ?? 0);
-if (shot) {
-  applyShot(game, shot, Number.isFinite(sceneParam) ? sceneParam : 0);
-  paintPanels(panels, game.sceneIndex);
-  lastScene = game.sceneIndex;
-}
-
-attachInput(canvas, game, ui, sfx);
-
-// test hook: lets the Playwright harness drive the game and read state
+// Expose for the screenshot helper and for Playwright-driven checks.
 window.__game = game;
-window.__ui = ui;
-window.__panels = panels;
+window.__renderer = renderer;
+
+function showScreen(st) {
+  const map = {
+    [SCREENS.TITLE]: overlays.title,
+    [SCREENS.LEVEL_DONE]: overlays.level,
+    [SCREENS.WIN]: overlays.win,
+    [SCREENS.GAME_OVER]: overlays.over,
+  };
+  for (const el of Object.values(overlays)) if (el) el.classList.add('hidden');
+  const active = map[st.screen];
+  if (active) active.classList.remove('hidden');
+
+  if (st.screen === SCREENS.LEVEL_DONE) {
+    const bonus = document.getElementById('level-bonus');
+    if (bonus) bonus.textContent = `Time bonus: +${st.levelBonus}`;
+    const found = document.getElementById('level-found');
+    if (found) found.textContent = `You found all 7 differences in ${game.scene().name}!`;
+    const score = document.getElementById('level-score');
+    if (score) score.textContent = `Score: ${st.score}`;
+  }
+  if (st.screen === SCREENS.WIN) {
+    const total = document.getElementById('win-total');
+    if (total) total.textContent = `Final score: ${st.score}`;
+    const best = document.getElementById('win-best');
+    if (best) best.textContent = `Best score: ${st.best}`;
+    const found = document.getElementById('win-found');
+    if (found) found.textContent = `You found all ${game.totalDifferences} differences across 3 space scenes!`;
+  }
+  if (st.screen === SCREENS.GAME_OVER) {
+    const score = document.getElementById('over-score');
+    if (score) score.textContent = `Score: ${st.score} — you found ${st.totalFound} of ${game.totalDifferences} differences.`;
+  }
+  if (st.screen === SCREENS.TITLE) {
+    const best = document.getElementById('title-best');
+    if (best) best.textContent = st.best > 0 ? `Best score: ${st.best}` : 'Find all 7 differences in each of the 3 space scenes!';
+  }
+}
 
 let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.1, (now - last) / 1000);
+function loop(now) {
+  const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
-  if (game.sceneIndex !== lastScene) {
-    paintPanels(panels, game.sceneIndex);
-    lastScene = game.sceneIndex;
-  }
-  const prevScreen = game.screen;
-  tick(game, dt);
-  if (game.screen === 'playing') {
-    const sec = Math.ceil(game.timeLeft);
-    if (sec !== lastTickSecond) {
-      lastTickSecond = sec;
-      if (sec <= 10 && sec > 0) sfx.tick();
-    }
-  }
-  if (prevScreen === 'playing' && game.screen === 'win') sfx.win();
-  if (prevScreen === 'playing' && game.screen === 'levelComplete') sfx.levelClear();
-  render(ctx, game, ui);
-  requestAnimationFrame(frame);
+  game.tick(dt);
+  renderer.render(now);
+  requestAnimationFrame(loop);
 }
-requestAnimationFrame(frame);
+
+renderer.updateHud();
+showScreen(game.state);
+requestAnimationFrame(loop);
+
+// First user gesture unlocks audio (browsers block sound before interaction).
+window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
+window.addEventListener('keydown', () => sfx.unlock(), { once: true });
+
+// R restarts from the win or game-over screens, without hunting for the button.
+window.addEventListener('keydown', (evt) => {
+  if ((evt.key === 'r' || evt.key === 'R') &&
+      (game.state.screen === SCREENS.WIN || game.state.screen === SCREENS.GAME_OVER)) {
+    game.startGame();
+  }
+});

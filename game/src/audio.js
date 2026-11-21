@@ -1,76 +1,78 @@
-// Jungle Spotter v2 — synthesized WebAudio sound effects. No sound files, no
-// network: every effect is a short oscillator envelope. The AudioContext is
-// created lazily on the first user gesture so autoplay rules never block it.
-export function createSfx() {
-  let ctx = null;
-  let muted = false;
+// Starlight Station — synthesized sound effects (WebAudio, no sound files).
+// Every effect is a short oscillator envelope so the game stays fully offline.
 
-  function ac() {
-    if (!ctx) {
-      try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        ctx = new AC();
-      } catch {
-        return null;
-      }
-    }
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
-    return ctx;
+let audioCtx = null;
+let muted = false;
+
+function ctx() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    audioCtx = new AC();
   }
-
-  function tone(freq, dur, type, vol, when = 0, slideTo = null) {
-    if (muted) return;
-    const c = ac();
-    if (!c) return;
-    const t0 = c.currentTime + when;
-    const osc = c.createOscillator();
-    const gain = c.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(gain);
-    gain.connect(c.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
-  }
-
-  return {
-    click() {
-      tone(660, 0.07, 'sine', 0.12);
-    },
-    correct() {
-      // bright two-note chirp
-      tone(880, 0.1, 'sine', 0.16);
-      tone(1318, 0.16, 'sine', 0.16, 0.09);
-    },
-    wrong() {
-      // low dull buzz
-      tone(160, 0.22, 'sawtooth', 0.1, 0, 110);
-    },
-    hint() {
-      // soft chime arpeggio
-      tone(1046, 0.12, 'triangle', 0.14);
-      tone(1568, 0.18, 'triangle', 0.12, 0.1);
-    },
-    levelClear() {
-      // three rising notes when a scene is cleared
-      tone(659, 0.12, 'triangle', 0.15);
-      tone(880, 0.12, 'triangle', 0.15, 0.1);
-      tone(1174, 0.22, 'triangle', 0.15, 0.2);
-    },
-    win() {
-      // little jungle fanfare
-      [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, 'triangle', 0.16, i * 0.12));
-      tone(1318, 0.4, 'triangle', 0.14, 0.5);
-    },
-    tick() {
-      tone(1200, 0.05, 'square', 0.06);
-    },
-    setMuted(m) {
-      muted = m;
-    },
-  };
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  return audioCtx;
 }
+
+function tone(freq, startAt, dur, type, vol, slideTo) {
+  const ac = ctx();
+  if (!ac || muted) return;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ac.currentTime + startAt);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, ac.currentTime + startAt + dur);
+  gain.gain.setValueAtTime(0.0001, ac.currentTime + startAt);
+  gain.gain.exponentialRampToValueAtTime(vol, ac.currentTime + startAt + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + startAt + dur);
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.start(ac.currentTime + startAt);
+  osc.stop(ac.currentTime + startAt + dur + 0.05);
+}
+
+export const sfx = {
+  unlock() { ctx(); },
+  setMuted(m) { muted = m; },
+  isMuted() { return muted; },
+  // Soft UI blip when the cursor moves onto a panel or a button is pressed.
+  click() { tone(660, 0, 0.07, 'sine', 0.12); },
+  // Short ascending blip when a new scene starts.
+  levelStart() {
+    tone(440, 0, 0.09, 'triangle', 0.14);
+    tone(660, 0.08, 0.12, 'triangle', 0.14);
+  },
+  // Happy two-note chime when a difference is found.
+  found() {
+    tone(523.25, 0, 0.14, 'triangle', 0.22);
+    tone(783.99, 0.09, 0.22, 'triangle', 0.22);
+    tone(1046.5, 0.18, 0.28, 'sine', 0.14);
+  },
+  // Low buzz for a wrong click.
+  wrong() { tone(180, 0, 0.22, 'sawtooth', 0.12, 110); },
+  // Sparkle arpeggio for a hint.
+  hint() {
+    tone(880, 0, 0.1, 'sine', 0.14);
+    tone(1174.66, 0.08, 0.1, 'sine', 0.14);
+    tone(1567.98, 0.16, 0.18, 'sine', 0.12);
+  },
+  // Rising sweep when a scene is completed.
+  levelComplete() {
+    tone(523.25, 0, 0.16, 'triangle', 0.2);
+    tone(659.25, 0.12, 0.16, 'triangle', 0.2);
+    tone(783.99, 0.24, 0.16, 'triangle', 0.2);
+    tone(1046.5, 0.36, 0.34, 'triangle', 0.22);
+  },
+  // Little fanfare for winning the whole game.
+  win() {
+    const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5, 1318.5];
+    notes.forEach((n, i) => tone(n, i * 0.13, 0.22, 'triangle', 0.2));
+  },
+  // Sad descending notes for game over.
+  gameOver() {
+    tone(392, 0, 0.22, 'triangle', 0.18);
+    tone(311.13, 0.2, 0.22, 'triangle', 0.18);
+    tone(233.08, 0.4, 0.4, 'triangle', 0.18);
+  },
+  // Short tick when the timer drops under ten seconds.
+  tick() { tone(1200, 0, 0.05, 'square', 0.05); },
+};

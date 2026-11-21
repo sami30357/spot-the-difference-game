@@ -1,167 +1,181 @@
-// Jungle Spotter v2 — game state machine: title, playing, level-complete, win,
-// game-over. Pure logic; rendering lives in render.js, input in input.js.
-import {
-  SCENES,
-} from './scenes.js';
-import {
-  BEST_KEY,
-  HINTS_PER_SCENE,
-  SCORE_FOUND,
-  SCORE_WRONG,
-  TIME_BONUS_PER_SEC,
-  TIME_PER_SCENE,
-} from './config.js';
+// Starlight Station — game state machine.
+// Owns the score, timer, found differences, hints and screen flow. Rendering
+// lives in render.js, input in input.js; this module only decides what is true.
 
-export function loadBest() {
-  try {
-    return Number(localStorage.getItem(BEST_KEY)) || 0;
-  } catch {
-    return 0;
-  }
-}
+import { CONFIG, TOTAL_DIFFERENCES } from './config.js';
+import { SCENES } from './scenes.js';
+import { sfx } from './audio.js';
 
-export function saveBest(score) {
-  try {
-    localStorage.setItem(BEST_KEY, String(score));
-  } catch {
-    // storage unavailable (private mode) — best score just won't persist
-  }
-}
+export const SCREENS = {
+  TITLE: 'title',
+  PLAYING: 'playing',
+  LEVEL_DONE: 'level-done',
+  WIN: 'win',
+  GAME_OVER: 'game-over',
+};
 
-export function createGame() {
-  return {
-    screen: 'title', // title | playing | levelComplete | win | gameOver
+export function createGame(onChange) {
+  const state = {
+    screen: SCREENS.TITLE,
     sceneIndex: 0,
-    found: new Set(),
-    hinted: null, // diff currently revealed by a hint, or null
-    hintTimer: 0,
     score: 0,
-    best: loadBest(),
-    timeLeft: TIME_PER_SCENE,
-    hintsLeft: HINTS_PER_SCENE,
-    wrongs: 0,
-    foundCount: 0,
+    best: 0,
+    timeLeft: CONFIG.timePerSceneSeconds,
+    found: new Set(),       // indices of found differences in the current scene
+    hintsLeft: CONFIG.hintsPerScene,
+    hintIndex: -1,          // difference currently pulsing, or -1
+    hintUntil: 0,
+    magnifier: false,
+    cursor: { panel: 0, x: CONFIG.panelSize / 2, y: CONFIG.panelSize / 2, visible: false },
+    wrongFlash: null,       // {panel, x, y, until} for a red X
+    levelBonus: 0,
     totalFound: 0,
-    message: '',
-    messageTimer: 0,
-    flash: null, // {x, y, panel, ok} — brief click feedback ring
-    flashTimer: 0,
-    crosshair: { panel: 'A', x: 300, y: 220 },
-    sceneStartScore: 0,
+    muted: false,
+    lastTickSecond: -1,
   };
-}
 
-export function currentScene(game) {
-  return SCENES[game.sceneIndex];
-}
+  try { state.best = Number(localStorage.getItem(CONFIG.bestScoreKey) || 0) || 0; } catch (_) { state.best = 0; }
 
-export function diffsLeft(game) {
-  return currentScene(game).diffs.length - game.found.size;
-}
+  function emit() { if (onChange) onChange(state); }
+  function scene() { return SCENES[state.sceneIndex]; }
 
-export function startGame(game) {
-  game.sceneIndex = 0;
-  game.score = 0;
-  game.totalFound = 0;
-  game.wrongs = 0;
-  game.best = loadBest();
-  beginScene(game);
-  game.screen = 'playing';
-}
+  function saveBest() {
+    if (state.score > state.best) {
+      state.best = state.score;
+      try { localStorage.setItem(CONFIG.bestScoreKey, String(state.best)); } catch (_) {}
+    }
+  }
 
-export function beginScene(game) {
-  game.found = new Set();
-  game.hinted = null;
-  game.hintTimer = 0;
-  game.timeLeft = TIME_PER_SCENE;
-  game.hintsLeft = HINTS_PER_SCENE;
-  game.sceneStartScore = game.score;
-  game.message = '';
-  game.messageTimer = 0;
-  game.flash = null;
-}
+  function startGame() {
+    state.sceneIndex = 0;
+    state.score = 0;
+    state.totalFound = 0;
+    state.levelBonus = 0;
+    startScene(0);
+    state.screen = SCREENS.PLAYING;
+    sfx.unlock();
+    emit();
+  }
 
-export function timeBonus(game) {
-  return Math.round(game.timeLeft) * TIME_BONUS_PER_SEC;
-}
+  function startScene(i) {
+    state.sceneIndex = i;
+    state.found = new Set();
+    state.timeLeft = CONFIG.timePerSceneSeconds;
+    state.hintsLeft = CONFIG.hintsPerScene;
+    state.hintIndex = -1;
+    state.wrongFlash = null;
+    state.lastTickSecond = -1;
+    sfx.levelStart();
+    emit();
+  }
 
-export function markFound(game, diffIndex, panel) {
-  if (game.screen !== 'playing' || game.found.has(diffIndex)) return false;
-  game.found.add(diffIndex);
-  game.foundCount += 1;
-  game.totalFound += 1;
-  game.score += SCORE_FOUND;
-  game.flash = { x: currentScene(game).diffs[diffIndex].x, y: currentScene(game).diffs[diffIndex].y, panel, ok: true };
-  game.flashTimer = 0.5;
-  const left = diffsLeft(game);
-  if (left === 0) {
-    const bonus = timeBonus(game);
-    game.score += bonus;
-    game.message = `Scene clear! Time bonus +${bonus}`;
-    game.messageTimer = 2.5;
-    if (game.sceneIndex + 1 >= SCENES.length) {
-      game.screen = 'win';
-      if (game.score > game.best) {
-        game.best = game.score;
-        saveBest(game.score);
+  function markAt(panel, x, y) {
+    if (state.screen !== SCREENS.PLAYING) return false;
+    const diffs = scene().differences;
+    for (let i = 0; i < diffs.length; i++) {
+      if (state.found.has(i)) continue;
+      const d = diffs[i];
+      const dx = x - d.x, dy = y - d.y;
+      if (dx * dx + dy * dy <= d.r * d.r) {
+        state.found.add(i);
+        state.totalFound += 1;
+        state.score += CONFIG.pointsPerFind;
+        sfx.found();
+        if (state.found.size === diffs.length) completeScene();
+        emit();
+        return true;
       }
+    }
+    // Miss: small penalty, red X flash at the click point.
+    state.score = Math.max(0, state.score + CONFIG.pointsPerMiss);
+    state.wrongFlash = { panel, x, y, until: performance.now() + 650 };
+    sfx.wrong();
+    emit();
+    return false;
+  }
+
+  function completeScene() {
+    state.levelBonus = Math.round(state.timeLeft) * CONFIG.timeBonusPerSecond;
+    state.score += state.levelBonus;
+    saveBest();
+    sfx.levelComplete();
+    if (state.sceneIndex >= SCENES.length - 1) {
+      state.screen = SCREENS.WIN;
+      sfx.win();
     } else {
-      game.screen = 'levelComplete';
+      state.screen = SCREENS.LEVEL_DONE;
     }
-  } else {
-    game.message = `Found! ${left} left`;
-    game.messageTimer = 1.2;
+    emit();
   }
-  return true;
-}
 
-export function markWrong(game, x, y, panel) {
-  if (game.screen !== 'playing') return;
-  game.score = Math.max(0, game.score + SCORE_WRONG);
-  game.wrongs += 1;
-  game.flash = { x, y, panel, ok: false };
-  game.flashTimer = 0.45;
-  game.message = 'Not a difference — −10';
-  game.messageTimer = 1.2;
-}
-
-export function useHint(game) {
-  if (game.screen !== 'playing' || game.hintsLeft <= 0) return false;
-  const remaining = currentScene(game).diffs
-    .map((d, i) => i)
-    .filter((i) => !game.found.has(i));
-  if (remaining.length === 0) return false;
-  game.hintsLeft -= 1;
-  // reveal the first unfound difference with a pulsing gold ring
-  game.hinted = remaining[0];
-  game.hintTimer = 3;
-  game.message = `Hint: ${currentScene(game).diffs[remaining[0]].label}`;
-  game.messageTimer = 2;
-  return true;
-}
-
-export function nextScene(game) {
-  if (game.screen !== 'levelComplete') return;
-  game.sceneIndex += 1;
-  beginScene(game);
-  game.screen = 'playing';
-}
-
-export function tick(game, dt) {
-  if (game.messageTimer > 0) game.messageTimer -= dt;
-  if (game.flashTimer > 0) game.flashTimer -= dt;
-  if (game.hintTimer > 0) {
-    game.hintTimer -= dt;
-    if (game.hintTimer <= 0) game.hinted = null;
+  function nextScene() {
+    startScene(state.sceneIndex + 1);
+    state.screen = SCREENS.PLAYING;
+    emit();
   }
-  if (game.screen !== 'playing') return;
-  game.timeLeft -= dt;
-  if (game.timeLeft <= 0) {
-    game.timeLeft = 0;
-    game.screen = 'gameOver';
-    if (game.score > game.best) {
-      game.best = game.score;
-      saveBest(game.score);
+
+  function useHint() {
+    if (state.screen !== SCREENS.PLAYING) return;
+    if (state.hintsLeft <= 0) return;
+    const remaining = scene().differences.map((_, i) => i).filter((i) => !state.found.has(i));
+    if (!remaining.length) return;
+    state.hintsLeft -= 1;
+    state.hintIndex = remaining[Math.floor(Math.random() * remaining.length)];
+    state.hintUntil = performance.now() + CONFIG.hintPulseMs;
+    sfx.hint();
+    emit();
+  }
+
+  function toggleMagnifier() {
+    state.magnifier = !state.magnifier;
+    sfx.click();
+    emit();
+  }
+
+  function toggleMute() {
+    state.muted = !state.muted;
+    sfx.setMuted(state.muted);
+    emit();
+  }
+
+  function gameOver() {
+    state.screen = SCREENS.GAME_OVER;
+    saveBest();
+    sfx.gameOver();
+    emit();
+  }
+
+  function tick(dtSeconds) {
+    if (state.screen !== SCREENS.PLAYING) return;
+    state.timeLeft -= dtSeconds;
+    const whole = Math.ceil(state.timeLeft);
+    if (whole <= 10 && whole !== state.lastTickSecond && whole > 0) {
+      state.lastTickSecond = whole;
+      sfx.tick();
     }
+    if (state.timeLeft <= 0) {
+      state.timeLeft = 0;
+      gameOver();
+      return;
+    }
+    if (state.hintIndex >= 0 && performance.now() > state.hintUntil) state.hintIndex = -1;
+    if (state.wrongFlash && performance.now() > state.wrongFlash.until) state.wrongFlash = null;
+    emit();
   }
+
+  return {
+    state,
+    scene,
+    startGame,
+    nextScene,
+    markAt,
+    useHint,
+    toggleMagnifier,
+    toggleMute,
+    tick,
+    get foundCount() { return state.found.size; },
+    get remainingCount() { return scene().differences.length - state.found.size; },
+    get totalFound() { return state.totalFound; },
+    get totalDifferences() { return TOTAL_DIFFERENCES; },
+  };
 }

@@ -1,1 +1,1 @@
-[{"name":"1-play.jpg","query":"?shot=play&seed=1"},{"name":"2-start.jpg","query":"?shot=start&seed=1"},{"name":"3-river.jpg","query":"?shot=play&scene=1&seed=1"},{"name":"4-end.jpg","query":"?shot=end&seed=1"}]
+{"screenshots":["screenshots/shot-1-cover.jpg","screenshots/shot-2-station.jpg","screenshots/shot-3-garden.jpg","screenshots/shot-4-magnifier.jpg"]}
